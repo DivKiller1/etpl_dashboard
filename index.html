@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ETPL Premium Dashboards</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Public+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300;1,400;1,500;1,600;1,700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="app">
+        <!-- Sidebar -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <div class="logo-box" style="background: var(--primary); width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold;">E</div>
+                <span class="logo-text">ETPL</span>
+            </div>
+            <nav class="sidebar-nav">
+                <div class="nav-category">Role Dashboards</div>
+                <div class="nav-item active" data-role="admin">
+                    <i data-lucide="shield"></i>
+                    <span>Admin Dashboard</span>
+                </div>
+                <div class="nav-item" data-role="manager">
+                    <i data-lucide="users"></i>
+                    <span>Manager Dashboard</span>
+                </div>
+                <div class="nav-item" data-role="hr">
+                    <i data-lucide="user-plus"></i>
+                    <span>HR Dashboard</span>
+                </div>
+                <div class="nav-item" data-role="accountant">
+                    <i data-lucide="credit-card"></i>
+                    <span>Accountant Dashboard</span>
+                </div>
+                <div class="nav-item" data-role="employee">
+                    <i data-lucide="activity"></i>
+                    <span>Employee Dashboard</span>
+                </div>
+                
+                <div class="nav-category">System</div>
+                <div class="nav-item">
+                    <i data-lucide="settings"></i>
+                    <span>Settings</span>
+                </div>
+                <div class="nav-item">
+                    <i data-lucide="clock"></i>
+                    <span>Audit Logs</span>
+                </div>
+            </nav>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <header class="topbar">
+                <div class="topbar-left">
+                    <button id="sidebar-toggle" style="background:none; border:none; cursor:pointer;"><i data-lucide="menu"></i></button>
+                    <div id="breadcrumb">ADMIN DASHBOARD</div>
+                </div>
+                <div class="topbar-right" style="display: flex; align-items: center; gap: 15px;">
+                    <div class="notification-icon" style="position: relative; cursor: pointer;">
+                        <i data-lucide="mail"></i>
+                        <span style="position: absolute; top: -5px; right: -5px; background: var(--primary-red); color: white; border-radius: 50%; width: 14px; height: 14px; font-size: 8px; display: flex; align-items: center; justify-content: center;">3</span>
+                    </div>
+                    <div class="user-profile" style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
+                        <div class="avatar" style="width: 32px; height: 32px; border-radius: 50%; background: #eee; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600;">AD</div>
+                        <div class="user-info" style="display: none; flex-direction: column;">
+                            <span class="user-name" style="font-size: 13px; font-weight: 600;">Admin User</span>
+                            <span class="user-role" style="font-size: 11px; color: var(--text-muted);">Administrator</span>
+                        </div>
+                        <i data-lucide="chevron-down" style="width: 16px;"></i>
+                    </div>
+                </div>
+            </header>
+
+            <div class="content-wrapper" id="content">
+                <!-- Data will be injected here -->
+                <div class="dashboard-loading">Initializing Premium Experience...</div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
+    <script type="module" src="main.js"></script>
+</body>
+</html>
