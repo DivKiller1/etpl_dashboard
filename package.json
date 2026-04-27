@@ -10,17 +10,15 @@
     "start": "node api/index.js"
   },
   "dependencies": {
-    "apexcharts": "^5.10.6",
-    "axios": "^1.15.0",
-    "lucide": "^1.8.0",
-    "body-parser": "^2.2.2",
-    "cors": "^2.8.6",
-    "dotenv": "^17.4.1",
-    "express": "^5.2.1",
-    "mongoose": "^9.4.1",
-    "morgan": "^1.10.1"
-  },
-  "devDependencies": {
-    "vite": "^8.0.8"
+    "vite": "^6.0.0",
+    "apexcharts": "latest",
+    "axios": "^1.7.0",
+    "lucide": "latest",
+    "body-parser": "^1.20.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "mongoose": "^8.4.1",
+    "morgan": "^1.10.0"
   }
 }

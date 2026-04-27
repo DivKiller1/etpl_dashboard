@@ -4,8 +4,8 @@ const cors = require('cors');
 const morgan = require('morgan');
 const connectDB = require('./config/db');
 
-// Load env vars
-dotenv.config();
+const path = require('path');
+dotenv.config({ path: path.join(__dirname, '.env') });
 
 // Connect to database (only for local dev/seeding)
 if (process.env.NODE_ENV !== 'production') {
