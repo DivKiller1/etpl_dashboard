@@ -1,10 +1,17 @@
-const fs = require('fs');
-const path = require('path');
+
 
 class JsonModel {
     constructor(name) {
         this.name = name;
-        this.data = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'data', `${name}.json`), 'utf8'));
+        switch(name) {
+            case 'employees': this.data = require('../data/employees.json'); break;
+            case 'expenses': this.data = require('../data/expenses.json'); break;
+            case 'leaverequests': this.data = require('../data/leaverequests.json'); break;
+            case 'customers': this.data = require('../data/customers.json'); break;
+            case 'vendors': this.data = require('../data/vendors.json'); break;
+            case 'sites': this.data = require('../data/sites.json'); break;
+            default: this.data = [];
+        }
     }
 
     async find(query = {}) {
