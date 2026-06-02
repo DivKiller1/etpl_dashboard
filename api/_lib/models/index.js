@@ -1,0 +1,57 @@
+const mongoose = require('mongoose');
+
+// User Model
+const UserSchema = new mongoose.Schema({
+    name: String,
+    fullName: String,
+    lastName: String,
+    isDeleted: { type: Boolean, default: false },
+    isSuspended: { type: Boolean, default: false }
+}, { collection: 'users', strict: false });
+
+// Customer Model
+const CustomerSchema = new mongoose.Schema({
+    name: String
+}, { collection: 'customers' });
+
+// Site Model
+const SiteSchema = new mongoose.Schema({
+    name: String,
+    customerId: { type: mongoose.Schema.Types.ObjectId, ref: 'Customer' }
+}, { collection: 'sites' });
+
+// Attendance Model
+const AttendanceSchema = new mongoose.Schema({
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    date: Date,
+    siteId: { type: mongoose.Schema.Types.ObjectId, ref: 'Site' }
+}, { collection: 'attendances' });
+
+// Expense Model
+const ExpenseSchema = new mongoose.Schema({
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    customerId: { type: mongoose.Schema.Types.ObjectId, ref: 'Customer' },
+    siteId: { type: mongoose.Schema.Types.ObjectId, ref: 'Site' },
+    amount: Number,
+    date: Date,
+    status: String
+}, { collection: 'expenses' });
+
+// Leave Model
+const LeaveSchema = new mongoose.Schema({
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    startDate: Date,
+    endDate: Date,
+    status: String,
+    type: String,
+    amount: Number
+}, { collection: 'leaves', strict: false });
+
+module.exports = {
+    User: mongoose.model('User', UserSchema),
+    Customer: mongoose.model('Customer', CustomerSchema),
+    Site: mongoose.model('Site', SiteSchema),
+    Attendance: mongoose.model('Attendance', AttendanceSchema),
+    Expense: mongoose.model('Expense', ExpenseSchema),
+    Leave: mongoose.model('Leave', LeaveSchema)
+};

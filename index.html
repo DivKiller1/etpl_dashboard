@@ -3,87 +3,285 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ETPL Premium Dashboards</title>
+    <title>ETPL Operational Dashboard</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Public+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300;1,400;1,500;1,600;1,700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
+    
+    <!-- Pinned CDN Scripts -->
+    <script src="https://cdn.jsdelivr.net/npm/exceljs@4.3.0/dist/exceljs.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/apexcharts@3.45.2/dist/apexcharts.min.js"></script>
 </head>
 <body>
     <div id="app">
         <!-- Sidebar -->
         <aside class="sidebar" id="sidebar">
             <div class="sidebar-header">
-                <div class="logo-box" style="background: var(--primary); width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold;">E</div>
+                <div class="logo-box">E</div>
                 <span class="logo-text">ETPL</span>
             </div>
             <nav class="sidebar-nav">
-                <div class="nav-category">Role Dashboards</div>
-                <div class="nav-item active" data-role="admin">
-                    <i data-lucide="shield"></i>
-                    <span>Admin Dashboard</span>
-                </div>
-                <div class="nav-item" data-role="manager">
-                    <i data-lucide="users"></i>
-                    <span>Manager Dashboard</span>
-                </div>
-                <div class="nav-item" data-role="hr">
-                    <i data-lucide="user-plus"></i>
-                    <span>HR Dashboard</span>
-                </div>
-                <div class="nav-item" data-role="accountant">
-                    <i data-lucide="credit-card"></i>
-                    <span>Accountant Dashboard</span>
-                </div>
-                <div class="nav-item" data-role="employee">
-                    <i data-lucide="activity"></i>
-                    <span>Employee Dashboard</span>
-                </div>
-                
-                <div class="nav-category">System</div>
-                <div class="nav-item">
-                    <i data-lucide="settings"></i>
-                    <span>Settings</span>
-                </div>
-                <div class="nav-item">
-                    <i data-lucide="clock"></i>
-                    <span>Audit Logs</span>
-                </div>
+                <div class="nav-category">Main Dashboard</div>
+                <a href="#" class="nav-item active" id="nav-dashboard">
+                    <i data-lucide="layout-dashboard"></i>
+                    <span>Operational Analytics</span>
+                </a>
             </nav>
         </aside>
 
         <!-- Main Content -->
         <main class="main-content">
+            <!-- Header & Global Filters -->
             <header class="topbar">
                 <div class="topbar-left">
-                    <button id="sidebar-toggle" style="background:none; border:none; cursor:pointer;"><i data-lucide="menu"></i></button>
-                    <div id="breadcrumb">ADMIN DASHBOARD</div>
+                    <div id="breadcrumb">OPERATIONAL ANALYTICS</div>
                 </div>
-                <div class="topbar-right" style="display: flex; align-items: center; gap: 15px;">
-                    <div class="notification-icon" style="position: relative; cursor: pointer;">
-                        <i data-lucide="mail"></i>
-                        <span style="position: absolute; top: -5px; right: -5px; background: var(--primary-red); color: white; border-radius: 50%; width: 14px; height: 14px; font-size: 8px; display: flex; align-items: center; justify-content: center;">3</span>
-                    </div>
-                    <div class="user-profile" style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
-                        <div class="avatar" style="width: 32px; height: 32px; border-radius: 50%; background: #eee; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600;">AD</div>
-                        <div class="user-info" style="display: none; flex-direction: column;">
-                            <span class="user-name" style="font-size: 13px; font-weight: 600;">Admin User</span>
-                            <span class="user-role" style="font-size: 11px; color: var(--text-muted);">Administrator</span>
+                <div class="topbar-right">
+                    <!-- Global Filters Container -->
+                    <div class="filters-container">
+                        <div class="filter-group">
+                            <label for="month-select">Month</label>
+                            <select id="month-select" class="filter-select">
+                                <option value="all">All Time</option>
+                                <option value="2026-01">January 2026</option>
+                                <option value="2026-02">February 2026</option>
+                                <option value="2026-03">March 2026</option>
+                                <option value="2026-04">April 2026</option>
+                                <option value="2026-05">May 2026</option>
+                                <option value="2026-06" selected>June 2026</option>
+                                <option value="2026-07">July 2026</option>
+                                <option value="2026-08">August 2026</option>
+                                <option value="2026-09">September 2026</option>
+                                <option value="2026-10">October 2026</option>
+                                <option value="2026-11">November 2026</option>
+                                <option value="2026-12">December 2026</option>
+                            </select>
                         </div>
+                        <div class="filter-group">
+                            <label for="date-from">From</label>
+                            <input type="date" id="date-from" class="filter-input">
+                        </div>
+                        <div class="filter-group">
+                            <label for="date-to">To</label>
+                            <input type="date" id="date-to" class="filter-input">
+                        </div>
+                    </div>
+                    
+                    <div class="user-profile">
+                        <div class="avatar">AD</div>
                         <i data-lucide="chevron-down" style="width: 16px;"></i>
                     </div>
                 </div>
             </header>
 
+            <!-- Dashboard Content -->
             <div class="content-wrapper" id="content">
-                <!-- Data will be injected here -->
-                <div class="dashboard-loading">Initializing Premium Experience...</div>
+                <div class="dashboard-loading" id="dashboard-loading-spinner">Initializing...</div>
+                
+                <div class="dashboard-main-content hidden" id="dashboard-main-content">
+                    <!-- SECTION 1: Workforce Trends -->
+                    <div class="dashboard-section">
+                        <div class="section-header">
+                            <h2 class="section-title">Workforce Trends</h2>
+                            <div class="section-actions">
+                                <button id="export-attendance-raw-btn" class="btn btn-secondary">
+                                    <i data-lucide="download"></i> Export Raw Excel
+                                </button>
+                                <button id="export-leaves-btn" class="btn btn-secondary">
+                                    <i data-lucide="download"></i> Export Leaves Excel
+                                </button>
+                                <button id="export-attendance-formatted-btn" class="btn btn-primary">
+                                    <i data-lucide="download"></i> Formatted Export
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <div class="charts-grid-two">
+                            <!-- Chart 1: Attendance & Leave Trends -->
+                            <div class="chart-card">
+                                <div class="card-header-flex">
+                                    <h4>Attendance & Leave Trends</h4>
+                                    <select id="attendance-scale-select" class="card-header-select">
+                                        <option value="daily" selected>Daily</option>
+                                        <option value="weekly">Weekly</option>
+                                        <option value="monthly">Monthly</option>
+                                    </select>
+                                </div>
+                                <div class="chart-scroll-wrapper">
+                                    <div id="attendance-trends-chart"></div>
+                                </div>
+                            </div>
+                            
+                            <!-- Chart 2: Leave Distribution -->
+                            <div class="chart-card">
+                                <h4>Leave Distribution</h4>
+                                <div id="leave-distribution-chart"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- SECTION 2: Expense Analytics -->
+                    <div class="dashboard-section">
+                        <div class="section-header">
+                            <h2 class="section-title">Expense Analytics</h2>
+                            <div class="section-actions">
+                                <button id="export-expenses-btn" class="btn btn-primary">
+                                    <i data-lucide="download"></i> Export Expenses
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <!-- Chart 3: Overall Customer Expenses -->
+                        <div class="chart-card" style="margin-bottom: 24px;">
+                            <h4>Overall Customer Expenses</h4>
+                            <div class="chart-scroll-wrapper">
+                                <div id="customer-expenses-chart"></div>
+                            </div>
+                        </div>
+                        
+                        <div class="charts-grid-two">
+                            <!-- Chart 4A: Customer-Site Breakdown -->
+                            <div class="chart-card">
+                                <div class="card-header-flex">
+                                    <h4>Customer-Site Breakdown</h4>
+                                    <select id="customer-select" class="card-header-select"></select>
+                                </div>
+                                <div id="customer-site-chart"></div>
+                            </div>
+                            
+                            <!-- Chart 4B: Customer Expense Types -->
+                            <div class="chart-card">
+                                <h4>Customer Expense Types</h4>
+                                <div id="expense-types-chart"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- SECTION 3: Workforce Location Distribution -->
+                    <div class="dashboard-section" style="margin-top: 35px;">
+                        <div class="section-header">
+                            <h2 class="section-title">Workforce Location Distribution</h2>
+                        </div>
+                        
+                        <!-- Line Chart Card -->
+                        <div class="chart-card" style="margin-bottom: 24px;">
+                            <div class="card-header-flex" style="flex-wrap: wrap; gap: 8px;">
+                                <h4>Workforce Distribution Trend</h4>
+                                <div style="display: flex; gap: 8px;">
+                                    <select id="dist-month-select" class="card-header-select"></select>
+                                    <select id="dist-date-select" class="card-header-select"></select>
+                                </div>
+                            </div>
+                            <div style="width: 100%; overflow: hidden; position: relative;">
+                                <div id="workforce-distribution-chart"></div>
+                            </div>
+                        </div>
+
+                        <!-- Details & Share Grid -->
+                        <div class="charts-grid-two">
+                            <!-- Site Wise Details Table -->
+                            <div class="chart-card">
+                                <h4>Workforce Site Details</h4>
+                                <div class="table-scroll-wrapper" style="max-height: 350px;">
+                                    <table class="modal-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Site/Location</th>
+                                                <th style="text-align: center;">Present</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="workforce-dist-table-body">
+                                            <!-- Dynamically loaded on dropdown changes -->
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+
+                            <!-- Location Share Donut Chart -->
+                            <div class="chart-card">
+                                <h4>Workforce Location Share</h4>
+                                <div id="workforce-share-chart"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </main>
     </div>
 
-    <!-- Scripts -->
-    <script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
-    <script type="module" src="main.js"></script>
+    <!-- Leave Drill-down Modal -->
+    <div class="modal-overlay" id="leave-modal">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h3 class="modal-title" id="leave-modal-title">Leave Details</h3>
+                <button class="modal-close-btn" id="leave-modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="table-scroll-wrapper">
+                    <table class="modal-table">
+                        <thead>
+                            <tr>
+                                <th>Employee Name</th>
+                                <th>Date(s)</th>
+                                <th>Duration (Days)</th>
+                            </tr>
+                        </thead>
+                        <tbody id="leave-modal-table-body">
+                            <!-- Loaded dynamically on click -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="leave-modal-export-btn" class="btn btn-primary">
+                    <i data-lucide="download"></i> Export Leave Details
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Workforce Drill-down Modal -->
+    <div class="modal-overlay" id="workforce-modal">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h3 class="modal-title" id="workforce-modal-title">Workforce Details</h3>
+                <button class="modal-close-btn" id="workforce-modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div style="margin-bottom: 16px; display: flex; gap: 24px;">
+                    <div>
+                        <h4 style="margin: 0; font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;">Customer Name</h4>
+                        <p id="workforce-modal-customer" style="font-weight: 700; font-size: 15px; color: #1e1b4b; margin-top: 4px;"></p>
+                    </div>
+                    <div>
+                        <h4 style="margin: 0; font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;">Site Name</h4>
+                        <p id="workforce-modal-site" style="font-weight: 700; font-size: 15px; color: #1e1b4b; margin-top: 4px;"></p>
+                    </div>
+                </div>
+                <div class="table-scroll-wrapper">
+                    <table class="modal-table">
+                        <thead>
+                            <tr>
+                                <th>Employee Name</th>
+                                <th>Role / Designation</th>
+                            </tr>
+                        </thead>
+                        <tbody id="workforce-modal-table-body">
+                            <!-- Loaded dynamically on click -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="workforce-modal-export-btn" class="btn btn-primary">
+                    <i data-lucide="download"></i> Export List Excel
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Script loading -->
+    <script type="module" src="dashboard_v2.js"></script>
 </body>
 </html>
