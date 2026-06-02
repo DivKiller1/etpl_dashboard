@@ -36,6 +36,22 @@ let dailyAttendanceDb = []; // Array of { employeeName, date, status }
 let dailyExpensesDb = [];    // Array of { customerName, date, site, category, amount }
 let leaveTransactions = [];  // Array of { employeeName, startDate, endDate, duration, type }
 let dailyLocationAttendances = []; // Array of { employeeName, role, date, siteId, siteName, customerName }
+let employeeMap = {}; // Lookup map of employee details keyed by employee name
+
+// Helper to determine the primary work MODE of an employee based on designation and base location
+function getEmployeePrimaryMode(empDetails) {
+    if (!empDetails) return 'On-Field';
+    const des = (empDetails.designation || '').toLowerCase();
+    const loc = (empDetails.baseLocation || '').toLowerCase();
+
+    if (des.includes('site') || des.includes('engineer') || des.includes('technician')) {
+        return 'On-Field';
+    }
+    if (loc.includes('gurgaon') || des.includes('strategy') || des.includes('hr') || des.includes('trainee') || des.includes('head')) {
+        return 'Strategy Office';
+    }
+    return 'Head Office';
+}
 
 // Chart References
 let chartAttendanceTrends = null;
@@ -88,6 +104,14 @@ function processRawApiData(data) {
     dailyExpensesDb = [];
     leaveTransactions = [];
     dailyLocationAttendances = [];
+
+    // Build lookup map for employee extra details
+    employeeMap = {};
+    if (data && data.employees) {
+        data.employees.forEach(emp => {
+            employeeMap[emp.fullName] = emp;
+        });
+    }
 
     const { detailedAttendance, customerExpenses, dailyAttendances } = data;
     if (dailyAttendances) {
@@ -1003,7 +1027,10 @@ async function exportWorkforceDrilldown(siteName, date, records) {
     const worksheet = workbook.addWorksheet('Workforce Details');
 
     worksheet.columns = [
+        { header: 'Employee ID', key: 'employeeId', width: 15 },
         { header: 'Employee Name', key: 'employeeName', width: 25 },
+        { header: 'MODE', key: 'mode', width: 15 },
+        { header: 'Reporting Manager', key: 'reportingManager', width: 25 },
         { header: 'Role / Designation', key: 'role', width: 25 },
         { header: 'Site Name', key: 'siteName', width: 30 },
         { header: 'Customer Name', key: 'customerName', width: 30 },
@@ -1011,8 +1038,12 @@ async function exportWorkforceDrilldown(siteName, date, records) {
     ];
 
     records.forEach(r => {
+        const empDetails = employeeMap[r.employeeName] || {};
         worksheet.addRow({
+            employeeId: empDetails.employeeId || 'N/A',
             employeeName: r.employeeName,
+            mode: getEmployeePrimaryMode(empDetails),
+            reportingManager: empDetails.managerName || 'N/A',
             role: r.role,
             siteName: r.siteName,
             customerName: r.customerName,
@@ -1065,7 +1096,10 @@ async function exportRawAttendance() {
 
     // 1. Setup column headers
     const columns = [
-        { header: 'Employee Name', key: 'employeeName', width: 25 }
+        { header: 'Employee ID', key: 'employeeId', width: 15 },
+        { header: 'Employee Name', key: 'employeeName', width: 25 },
+        { header: 'MODE', key: 'mode', width: 15 },
+        { header: 'Reporting Manager', key: 'reportingManager', width: 25 }
     ];
 
     datesInPeriod.forEach(d => {
@@ -1080,7 +1114,13 @@ async function exportRawAttendance() {
 
     // 2. Populate rows for each employee (simple values, no styles)
     employees.forEach(emp => {
-        const rowValues = { employeeName: emp };
+        const empDetails = employeeMap[emp] || {};
+        const rowValues = {
+            employeeId: empDetails.employeeId || 'N/A',
+            employeeName: emp,
+            mode: getEmployeePrimaryMode(empDetails),
+            reportingManager: empDetails.managerName || 'N/A'
+        };
         let workingDaysCount = 0;
         let presentDaysCount = 0;
         let absentDaysCount = 0;
@@ -1126,6 +1166,18 @@ async function exportRawAttendance() {
 }
 
 // Export complex, date-wise formatted attendance with location-specific holidays, Sundays, footer formulas, colors, and columns freeze
+// Helper to format date to d/Mmm (e.g. 1/Apr)
+function formatDateToDayMonth(dateStr) {
+    const d = new Date(dateStr);
+    if (isNaN(d)) return dateStr;
+    const day = d.getDate();
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const month = months[d.getMonth()];
+    return `${day}/${month}`;
+}
+
+// Export complex, date-wise formatted attendance with location-specific holidays, Sundays, footer formulas, colors, and columns freeze
+// Export complex, date-wise formatted attendance with location-specific holidays, Sundays, footer formulas, colors, and columns freeze
 async function exportFormattedAttendance() {
     const attendanceData = filterAttendanceDb();
     if (attendanceData.length === 0) {
@@ -1141,40 +1193,141 @@ async function exportFormattedAttendance() {
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet('Formatted Attendance');
 
-    // 1. Setup column headers
+    // 1. Setup column keys and widths (no headers set in columns array to handle manually)
     const columns = [
-        { header: 'Employee Name', key: 'employeeName', width: 25 }
+        { key: 'sNo', width: 8 },
+        { key: 'empStatus', width: 12 },
+        { key: 'joiningDate', width: 15 },
+        { key: 'employeeId', width: 15 },
+        { key: 'employeeName', width: 25 },
+        { key: 'mode', width: 15 },
+        { key: 'designation', width: 25 },
+        { key: 'reportingManager', width: 25 }
     ];
 
     datesInPeriod.forEach(d => {
-        const dateObj = new Date(d);
-        const headerLabel = dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-        columns.push({ header: headerLabel, key: d, width: 8 });
+        columns.push({ key: d, width: 8 });
     });
 
-    columns.push({ header: 'Total Working Days', key: 'totalWorking', width: 18 });
-    columns.push({ header: 'Total Present', key: 'totalPresent', width: 15 });
-    columns.push({ header: 'Total Absent', key: 'totalAbsent', width: 15 });
+    columns.push({ key: 'salariedWorkingDays', width: 22 });
+    columns.push({ key: 'totalDaysWorked', width: 18 });
+    columns.push({ key: 'leave', width: 12 });
+    columns.push({ key: 'holidaysExcludingSundays', width: 30 });
+    columns.push({ key: 'monthDays', width: 15 });
 
     worksheet.columns = columns;
 
-    const headerRow = worksheet.getRow(1);
-    headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-    headerRow.fill = {
-        type: 'pattern',
-        pattern: 'solid',
-        fgColor: { argb: 'FF6366F1' } // Purple header background
+    // 2. Define row 1 values (Days of week above dates)
+    const row1Values = {
+        sNo: '', empStatus: '', joiningDate: '', employeeId: '', employeeName: '', mode: '', designation: '', reportingManager: ''
     };
-    headerRow.alignment = { horizontal: 'center', vertical: 'middle' };
+    datesInPeriod.forEach(d => {
+        const dateObj = new Date(d);
+        const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+        row1Values[d] = dayNames[dateObj.getDay()];
+    });
+    row1Values['salariedWorkingDays'] = '';
+    row1Values['totalDaysWorked'] = '';
+    row1Values['leave'] = '';
+    row1Values['holidaysExcludingSundays'] = '';
+    row1Values['monthDays'] = '';
 
-    // 2. Populate rows for each employee
-    employees.forEach(emp => {
-        const rowValues = { employeeName: emp };
+    // 3. Define row 2 values (Labels)
+    const row2Values = {
+        sNo: 'S.no',
+        empStatus: 'Emp Status',
+        joiningDate: 'Joining Date',
+        employeeId: 'ID/Employee No.',
+        employeeName: 'Employee Name',
+        mode: 'MODE',
+        designation: 'Department/  Designation',
+        reportingManager: 'Reporting Manager'
+    };
+    datesInPeriod.forEach(d => {
+        row2Values[d] = formatDateToDayMonth(d);
+    });
+    row2Values['salariedWorkingDays'] = 'SALARIED  Working Days';
+    row2Values['totalDaysWorked'] = 'Total Days Worked';
+    row2Values['leave'] = 'Leave ';
+    row2Values['holidaysExcludingSundays'] = 'HOLIDAYS(EXCLUDING SUNDAYS)';
+    row2Values['monthDays'] = 'MONTH(DAYS)';
+
+    // Add header rows
+    worksheet.addRow(row1Values);
+    worksheet.addRow(row2Values);
+
+    // Apply header Row 1 Styles (Blue header for days of week)
+    const headerRow1 = worksheet.getRow(1);
+    headerRow1.height = 24;
+    for (let colIdx = 9; colIdx <= datesInPeriod.length + 8; colIdx++) {
+        const cell = headerRow1.getCell(colIdx);
+        cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+        cell.fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: 'FF0066CC' } // Blue background
+        };
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
+    }
+
+    // Apply header Row 2 Styles
+    const headerRow2 = worksheet.getRow(2);
+    headerRow2.height = 28;
+    // Warm Orange background for metadata columns (1-8)
+    for (let colIdx = 1; colIdx <= 8; colIdx++) {
+        const cell = headerRow2.getCell(colIdx);
+        cell.font = { bold: true, color: { argb: 'FF000000' } };
+        cell.fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: 'FFFFC000' } // Orange background
+        };
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
+    }
+    // Blue background for date headers (9 onwards)
+    for (let colIdx = 9; colIdx <= datesInPeriod.length + 8; colIdx++) {
+        const cell = headerRow2.getCell(colIdx);
+        cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+        cell.fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: 'FF0066CC' } // Blue background
+        };
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
+    }
+    // Blue background for summary headers
+    for (let colIdx = datesInPeriod.length + 9; colIdx <= datesInPeriod.length + 13; colIdx++) {
+        const cell = headerRow2.getCell(colIdx);
+        cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+        cell.fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: 'FF0066CC' } // Blue background
+        };
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
+    }
+
+    // 4. Populate rows for each employee
+    employees.forEach((emp, index) => {
+        const empDetails = employeeMap[emp] || {};
+        const employeeLoc = getEmployeeLocation(emp);
+
+        const rowValues = {
+            sNo: index + 1,
+            empStatus: empDetails.isSuspended ? 'Suspended' : 'Active',
+            joiningDate: empDetails.dateOfJoining ? formatDateToCustomStr(empDetails.dateOfJoining) : 'N/A',
+            employeeId: empDetails.employeeId || 'N/A',
+            employeeName: emp,
+            mode: getEmployeePrimaryMode(empDetails),
+            designation: empDetails.designation || 'Staff',
+            reportingManager: empDetails.managerName || 'N/A'
+        };
+
         let workingDaysCount = 0;
         let presentDaysCount = 0;
-        let absentDaysCount = 0;
-
-        const employeeLoc = getEmployeeLocation(emp);
+        let leaveDaysCount = 0;
+        let holidaysExcludingSundaysCount = 0;
+        const monthDaysCount = datesInPeriod.length;
 
         datesInPeriod.forEach(d => {
             const dateObj = new Date(d);
@@ -1184,6 +1337,10 @@ async function exportFormattedAttendance() {
                 if (holiday.date !== d) return false;
                 return holiday.location === 'all' || holiday.location === employeeLoc;
             });
+
+            if (isHoliday && !isSunday) {
+                holidaysExcludingSundaysCount++;
+            }
 
             // Strict Rule: Holiday & Sundays override present/absent and are marked with acronym 'H'
             if (isSunday || isHoliday) {
@@ -1196,21 +1353,32 @@ async function exportFormattedAttendance() {
                     presentDaysCount++;
                 } else if (record && record.status === 'Leave') {
                     rowValues[d] = 'L';
+                    leaveDaysCount++;
                 } else {
                     rowValues[d] = 'A';
-                    absentDaysCount++;
                 }
             }
         });
 
-        rowValues['totalWorking'] = workingDaysCount;
-        rowValues['totalPresent'] = presentDaysCount;
-        rowValues['totalAbsent'] = absentDaysCount;
+        rowValues['salariedWorkingDays'] = workingDaysCount;
+        rowValues['totalDaysWorked'] = presentDaysCount;
+        rowValues['leave'] = leaveDaysCount;
+        rowValues['holidaysExcludingSundays'] = holidaysExcludingSundaysCount;
+        rowValues['monthDays'] = monthDaysCount;
 
         const addedRow = worksheet.addRow(rowValues);
 
-        addedRow.getCell(1).font = { bold: true };
-        addedRow.getCell(1).alignment = { horizontal: 'left' };
+        // Styling Employee Name
+        addedRow.getCell(5).font = { bold: true };
+        addedRow.getCell(5).alignment = { horizontal: 'left' };
+
+        addedRow.getCell(1).alignment = { horizontal: 'center' };
+        addedRow.getCell(2).alignment = { horizontal: 'center' };
+        addedRow.getCell(3).alignment = { horizontal: 'center' };
+        addedRow.getCell(4).alignment = { horizontal: 'center' };
+        addedRow.getCell(6).alignment = { horizontal: 'center' };
+        addedRow.getCell(7).alignment = { horizontal: 'left' };
+        addedRow.getCell(8).alignment = { horizontal: 'left' };
 
         // Color coding formatting
         const fills = {
@@ -1221,7 +1389,7 @@ async function exportFormattedAttendance() {
         };
 
         datesInPeriod.forEach((d, dIdx) => {
-            const cell = addedRow.getCell(dIdx + 2);
+            const cell = addedRow.getCell(dIdx + 9);
             const val = cell.value;
             cell.alignment = { horizontal: 'center' };
 
@@ -1241,9 +1409,12 @@ async function exportFormattedAttendance() {
             }
         });
 
-        addedRow.getCell(datesInPeriod.length + 2).alignment = { horizontal: 'center' };
-        addedRow.getCell(datesInPeriod.length + 3).alignment = { horizontal: 'center' };
-        addedRow.getCell(datesInPeriod.length + 4).alignment = { horizontal: 'center' };
+        // Center align summary cells at the end of the row
+        addedRow.getCell(datesInPeriod.length + 9).alignment = { horizontal: 'center' };
+        addedRow.getCell(datesInPeriod.length + 10).alignment = { horizontal: 'center' };
+        addedRow.getCell(datesInPeriod.length + 11).alignment = { horizontal: 'center' };
+        addedRow.getCell(datesInPeriod.length + 12).alignment = { horizontal: 'center' };
+        addedRow.getCell(datesInPeriod.length + 13).alignment = { horizontal: 'center' };
     });
 
     worksheet.eachRow(row => {
@@ -1257,7 +1428,8 @@ async function exportFormattedAttendance() {
         });
     });
 
-    worksheet.views = [{ state: 'frozen', xSplit: 1, ySplit: 1 }];
+    // Freeze first 8 columns and first 2 header rows
+    worksheet.views = [{ state: 'frozen', xSplit: 8, ySplit: 2 }];
 
     const filename = `AttendanceFormatted_${getExportDateSuffix()}.xlsx`;
     await downloadExcelWorkbook(workbook, filename);
@@ -1275,7 +1447,10 @@ async function exportGeneralLeavesList() {
     const worksheet = workbook.addWorksheet('Leaves Sheet');
 
     worksheet.columns = [
+        { header: 'Employee ID', key: 'employeeId', width: 15 },
         { header: 'Employee Name', key: 'employeeName', width: 25 },
+        { header: 'MODE', key: 'mode', width: 15 },
+        { header: 'Reporting Manager', key: 'reportingManager', width: 25 },
         { header: 'Start Date', key: 'startDate', width: 15 },
         { header: 'End Date', key: 'endDate', width: 15 },
         { header: 'Duration (Days)', key: 'duration', width: 15 },
@@ -1283,10 +1458,16 @@ async function exportGeneralLeavesList() {
     ];
 
     data.sort((a, b) => new Date(a.startDate) - new Date(b.startDate)).forEach(row => {
+        const empDetails = employeeMap[row.employeeName] || {};
         const formattedRow = {
-            ...row,
+            employeeId: empDetails.employeeId || 'N/A',
+            employeeName: row.employeeName,
+            mode: getEmployeePrimaryMode(empDetails),
+            reportingManager: empDetails.managerName || 'N/A',
             startDate: formatDateToCustomStr(row.startDate),
-            endDate: formatDateToCustomStr(row.endDate)
+            endDate: formatDateToCustomStr(row.endDate),
+            duration: row.duration,
+            type: row.type
         };
         worksheet.addRow(formattedRow);
     });
@@ -1309,7 +1490,10 @@ async function exportLeaveDetails(leaveType) {
     const worksheet = workbook.addWorksheet('Leave Details');
 
     worksheet.columns = [
+        { header: 'Employee ID', key: 'employeeId', width: 15 },
         { header: 'Employee Name', key: 'employeeName', width: 25 },
+        { header: 'MODE', key: 'mode', width: 15 },
+        { header: 'Reporting Manager', key: 'reportingManager', width: 25 },
         { header: 'Start Date', key: 'startDate', width: 15 },
         { header: 'End Date', key: 'endDate', width: 15 },
         { header: 'Duration (Days)', key: 'duration', width: 15 },
@@ -1317,10 +1501,16 @@ async function exportLeaveDetails(leaveType) {
     ];
 
     data.forEach(row => {
+        const empDetails = employeeMap[row.employeeName] || {};
         const formattedRow = {
-            ...row,
+            employeeId: empDetails.employeeId || 'N/A',
+            employeeName: row.employeeName,
+            mode: getEmployeePrimaryMode(empDetails),
+            reportingManager: empDetails.managerName || 'N/A',
             startDate: formatDateToCustomStr(row.startDate),
-            endDate: formatDateToCustomStr(row.endDate)
+            endDate: formatDateToCustomStr(row.endDate),
+            duration: row.duration,
+            type: row.type
         };
         worksheet.addRow(formattedRow);
     });

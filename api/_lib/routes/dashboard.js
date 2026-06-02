@@ -83,7 +83,7 @@ router.get('/data', async (req, res) => {
             isSuspended: false,
             roleId: { $not: { $regex: /director/i } },
             designation: { $not: { $regex: /director/i } }
-        }).select('_id fullName lastName roleId designation');
+        }).select('_id fullName lastName roleId designation employeeId dateOfJoining managerDetails baseLocation isSuspended');
         const activeCount = activeEmployees.length || 1;
 
         // 2. Aggregate Expenses
@@ -340,6 +340,23 @@ router.get('/data', async (req, res) => {
             if (temp) detailedAttendance[attendanceWeek] = temp;
         }
 
+        const activeEmployeesDetails = activeEmployees.map(emp => {
+            let empName = 'Unknown';
+            if (emp.fullName) {
+                empName = emp.fullName + (emp.lastName ? ' ' + emp.lastName : '');
+            }
+            return {
+                _id: emp._id,
+                employeeId: emp.employeeId || '',
+                fullName: empName,
+                designation: emp.designation || emp.roleId || 'Staff',
+                dateOfJoining: emp.dateOfJoining || '',
+                managerName: emp.managerDetails?.name || 'N/A',
+                baseLocation: emp.baseLocation || '',
+                isSuspended: emp.isSuspended || false
+            };
+        });
+
         res.json({
             success: true,
             data: {
@@ -347,7 +364,8 @@ router.get('/data', async (req, res) => {
                 weeklyTrends,
                 detailedAttendance,
                 customerExpenses: finalizedCustomerExpenses,
-                dailyAttendances
+                dailyAttendances,
+                employees: activeEmployeesDetails
             }
         });
     } catch (err) { 
