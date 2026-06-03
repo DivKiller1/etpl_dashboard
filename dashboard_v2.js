@@ -94,6 +94,13 @@ function formatDateStr(date) {
 
 // Map employee name to a location
 function getEmployeeLocation(name) {
+    const empDetails = employeeMap[name];
+    if (empDetails && empDetails.baseLocation) {
+        const loc = empDetails.baseLocation.trim().toLowerCase();
+        if (loc.includes('indore')) return 'indore';
+        if (loc.includes('gurgaon') || loc.includes('gurgoun') || loc.includes('gurugram')) return 'gurgaon';
+        return loc;
+    }
     if (EMPLOYEE_LOCATIONS[name]) return EMPLOYEE_LOCATIONS[name];
     return name.charCodeAt(0) % 2 === 0 ? "indore" : "gurgaon";
 }
@@ -1246,7 +1253,7 @@ async function exportFormattedAttendance() {
     datesInPeriod.forEach(d => {
         row2Values[d] = formatDateToDayMonth(d);
     });
-    row2Values['salariedWorkingDays'] = 'SALARIED  Working Days';
+    row2Values['salariedWorkingDays'] = 'Working Days';
     row2Values['totalDaysWorked'] = 'Total Days Worked';
     row2Values['leave'] = 'Leave ';
     row2Values['holidaysExcludingSundays'] = 'HOLIDAYS(EXCLUDING SUNDAYS)';

@@ -83,7 +83,7 @@ router.get('/data', async (req, res) => {
             isSuspended: false,
             roleId: { $not: { $regex: /director/i } },
             designation: { $not: { $regex: /director/i } }
-        }).select('_id fullName lastName roleId designation employeeId dateOfJoining managerDetails baseLocation isSuspended');
+        }).select('_id fullName lastName roleId designation employeeId dateOfJoining managerDetails managerId baseLocation isSuspended');
         const activeCount = activeEmployees.length || 1;
 
         // 2. Aggregate Expenses
@@ -340,18 +340,46 @@ router.get('/data', async (req, res) => {
             if (temp) detailedAttendance[attendanceWeek] = temp;
         }
 
+        // Build a map of all users to resolve manager full names
+        const allUsersForManagers = await User.find({}).select('_id fullName lastName email');
+        const userFullNameMap = {};
+        const userEmailFullNameMap = {};
+        allUsersForManagers.forEach(u => {
+            let name = u.fullName || '';
+            if (u.lastName) {
+                name += ' ' + u.lastName;
+            }
+            name = name.trim();
+            if (name) {
+                userFullNameMap[u._id.toString()] = name;
+                if (u.email) {
+                    userEmailFullNameMap[u.email.toLowerCase().trim()] = name;
+                }
+            }
+        });
+
         const activeEmployeesDetails = activeEmployees.map(emp => {
             let empName = 'Unknown';
             if (emp.fullName) {
                 empName = emp.fullName + (emp.lastName ? ' ' + emp.lastName : '');
             }
+            
+            let mName = 'N/A';
+            if (emp.managerId && userFullNameMap[emp.managerId.toString()]) {
+                mName = userFullNameMap[emp.managerId.toString()];
+            } else if (emp.managerDetails && emp.managerDetails.email && userEmailFullNameMap[emp.managerDetails.email.toLowerCase().trim()]) {
+                mName = userEmailFullNameMap[emp.managerDetails.email.toLowerCase().trim()];
+            } else if (emp.managerDetails && emp.managerDetails.name) {
+                mName = emp.managerDetails.name;
+            }
+
             return {
                 _id: emp._id,
                 employeeId: emp.employeeId || '',
                 fullName: empName,
                 designation: emp.designation || emp.roleId || 'Staff',
                 dateOfJoining: emp.dateOfJoining || '',
-                managerName: emp.managerDetails?.name || 'N/A',
+                managerName: mName,
                 baseLocation: emp.baseLocation || '',
                 isSuspended: emp.isSuspended || false
             };
