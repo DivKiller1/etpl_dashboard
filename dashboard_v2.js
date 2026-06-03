@@ -1183,7 +1183,16 @@ function formatDateToDayMonth(dateStr) {
     return `${day}/${month}`;
 }
 
-// Export complex, date-wise formatted attendance with location-specific holidays, Sundays, footer formulas, colors, and columns freeze
+// Helper to get leave type for a specific employee and date
+function getLeaveTypeForDate(empName, dateStr) {
+    const tx = leaveTransactions.find(t => 
+        t.employeeName === empName && 
+        dateStr >= t.startDate && 
+        dateStr <= t.endDate
+    );
+    return tx ? tx.type : 'SL'; // fallback to SL if not found
+}
+
 // Export complex, date-wise formatted attendance with location-specific holidays, Sundays, footer formulas, colors, and columns freeze
 async function exportFormattedAttendance() {
     const attendanceData = filterAttendanceDb();
@@ -1218,7 +1227,14 @@ async function exportFormattedAttendance() {
 
     columns.push({ key: 'salariedWorkingDays', width: 22 });
     columns.push({ key: 'totalDaysWorked', width: 18 });
-    columns.push({ key: 'leave', width: 12 });
+    
+    // Breakdown of leaves
+    columns.push({ key: 'leave_sl', width: 8 });
+    columns.push({ key: 'leave_lop', width: 8 });
+    columns.push({ key: 'leave_cl', width: 8 });
+    columns.push({ key: 'leave_el', width: 8 });
+    columns.push({ key: 'leave_bl', width: 8 });
+
     columns.push({ key: 'holidaysExcludingSundays', width: 30 });
     columns.push({ key: 'monthDays', width: 15 });
 
@@ -1235,7 +1251,11 @@ async function exportFormattedAttendance() {
     });
     row1Values['salariedWorkingDays'] = '';
     row1Values['totalDaysWorked'] = '';
-    row1Values['leave'] = '';
+    row1Values['leave_sl'] = 'Leave'; // Label for the merged cells
+    row1Values['leave_lop'] = '';
+    row1Values['leave_cl'] = '';
+    row1Values['leave_el'] = '';
+    row1Values['leave_bl'] = '';
     row1Values['holidaysExcludingSundays'] = '';
     row1Values['monthDays'] = '';
 
@@ -1255,7 +1275,11 @@ async function exportFormattedAttendance() {
     });
     row2Values['salariedWorkingDays'] = 'Working Days';
     row2Values['totalDaysWorked'] = 'Total Days Worked';
-    row2Values['leave'] = 'Leave ';
+    row2Values['leave_sl'] = 'SL';
+    row2Values['leave_lop'] = 'LOP';
+    row2Values['leave_cl'] = 'CL';
+    row2Values['leave_el'] = 'EL';
+    row2Values['leave_bl'] = 'BL';
     row2Values['holidaysExcludingSundays'] = 'HOLIDAYS(EXCLUDING SUNDAYS)';
     row2Values['monthDays'] = 'MONTH(DAYS)';
 
@@ -1267,6 +1291,23 @@ async function exportFormattedAttendance() {
     const headerRow1 = worksheet.getRow(1);
     headerRow1.height = 24;
     for (let colIdx = 9; colIdx <= datesInPeriod.length + 8; colIdx++) {
+        const cell = headerRow1.getCell(colIdx);
+        cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+        cell.fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: 'FF0066CC' } // Blue background
+        };
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
+    }
+
+    // Merge the leave header cells in Row 1: leave_sl to leave_bl
+    const leaveStartCol = datesInPeriod.length + 11;
+    const leaveEndCol = datesInPeriod.length + 15;
+    worksheet.mergeCells(1, leaveStartCol, 1, leaveEndCol);
+
+    // Style merged Leave cell in Row 1
+    for (let colIdx = leaveStartCol; colIdx <= leaveEndCol; colIdx++) {
         const cell = headerRow1.getCell(colIdx);
         cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
         cell.fill = {
@@ -1302,8 +1343,8 @@ async function exportFormattedAttendance() {
         };
         cell.alignment = { horizontal: 'center', vertical: 'middle' };
     }
-    // Blue background for summary headers
-    for (let colIdx = datesInPeriod.length + 9; colIdx <= datesInPeriod.length + 13; colIdx++) {
+    // Blue background for summary headers (salariedWorkingDays to monthDays)
+    for (let colIdx = datesInPeriod.length + 9; colIdx <= datesInPeriod.length + 17; colIdx++) {
         const cell = headerRow2.getCell(colIdx);
         cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
         cell.fill = {
@@ -1332,9 +1373,11 @@ async function exportFormattedAttendance() {
 
         let workingDaysCount = 0;
         let presentDaysCount = 0;
-        let leaveDaysCount = 0;
         let holidaysExcludingSundaysCount = 0;
         const monthDaysCount = datesInPeriod.length;
+
+        // Breakdown counts
+        const leaveBreakdown = { SL: 0, LOP: 0, CL: 0, EL: 0, BL: 0 };
 
         datesInPeriod.forEach(d => {
             const dateObj = new Date(d);
@@ -1360,7 +1403,10 @@ async function exportFormattedAttendance() {
                     presentDaysCount++;
                 } else if (record && record.status === 'Leave') {
                     rowValues[d] = 'L';
-                    leaveDaysCount++;
+                    const leaveType = getLeaveTypeForDate(emp, d);
+                    if (leaveBreakdown[leaveType] !== undefined) {
+                        leaveBreakdown[leaveType]++;
+                    }
                 } else {
                     rowValues[d] = 'A';
                 }
@@ -1369,7 +1415,11 @@ async function exportFormattedAttendance() {
 
         rowValues['salariedWorkingDays'] = workingDaysCount;
         rowValues['totalDaysWorked'] = presentDaysCount;
-        rowValues['leave'] = leaveDaysCount;
+        rowValues['leave_sl'] = leaveBreakdown['SL'];
+        rowValues['leave_lop'] = leaveBreakdown['LOP'];
+        rowValues['leave_cl'] = leaveBreakdown['CL'];
+        rowValues['leave_el'] = leaveBreakdown['EL'];
+        rowValues['leave_bl'] = leaveBreakdown['BL'];
         rowValues['holidaysExcludingSundays'] = holidaysExcludingSundaysCount;
         rowValues['monthDays'] = monthDaysCount;
 
@@ -1417,11 +1467,9 @@ async function exportFormattedAttendance() {
         });
 
         // Center align summary cells at the end of the row
-        addedRow.getCell(datesInPeriod.length + 9).alignment = { horizontal: 'center' };
-        addedRow.getCell(datesInPeriod.length + 10).alignment = { horizontal: 'center' };
-        addedRow.getCell(datesInPeriod.length + 11).alignment = { horizontal: 'center' };
-        addedRow.getCell(datesInPeriod.length + 12).alignment = { horizontal: 'center' };
-        addedRow.getCell(datesInPeriod.length + 13).alignment = { horizontal: 'center' };
+        for (let colIdx = datesInPeriod.length + 9; colIdx <= datesInPeriod.length + 17; colIdx++) {
+            addedRow.getCell(colIdx).alignment = { horizontal: 'center' };
+        }
     });
 
     worksheet.eachRow(row => {
