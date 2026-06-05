@@ -1821,6 +1821,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (e.key === 'Escape') {
             closeLeaveModal();
             closeWorkforceModal();
+            closeDirectorModal();
         }
     });
 
@@ -1833,6 +1834,738 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // 6. Initialize layout data loading
+    // 6. Director Dashboard View toggles
+    document.getElementById('nav-dashboard')?.addEventListener('click', (e) => {
+        e.preventDefault();
+        document.getElementById('nav-dashboard').classList.add('active');
+        document.getElementById('nav-director-dashboard')?.classList.remove('active');
+        document.getElementById('dashboard-main-content').classList.remove('hidden');
+        document.getElementById('director-dashboard-view')?.classList.add('hidden');
+        const breadcrumb = document.getElementById('breadcrumb');
+        if (breadcrumb) breadcrumb.textContent = 'OPERATIONAL ANALYTICS';
+        document.querySelector('.filters-container')?.classList.remove('hidden');
+    });
+
+    document.getElementById('nav-director-dashboard')?.addEventListener('click', (e) => {
+        e.preventDefault();
+        document.getElementById('nav-director-dashboard').classList.add('active');
+        document.getElementById('nav-dashboard').classList.remove('active');
+        document.getElementById('director-dashboard-view')?.classList.remove('hidden');
+        document.getElementById('dashboard-main-content').classList.add('hidden');
+        const breadcrumb = document.getElementById('breadcrumb');
+        if (breadcrumb) breadcrumb.textContent = 'DIRECTOR ANALYTICS';
+        document.querySelector('.filters-container')?.classList.add('hidden');
+        fetchDirectorData();
+        // Load Google Maps API script asynchronously
+        loadGoogleMapsScript();
+    });
+
+    document.getElementById('director-date-picker')?.addEventListener('change', () => {
+        fetchDirectorData();
+    });
+
+    document.getElementById('dir-export-idle-btn')?.addEventListener('click', exportDirIdleEngineers);
+    document.getElementById('dir-export-sites-risk-btn')?.addEventListener('click', exportDirSitesAtRisk);
+
+    // 7. Click events for Director Dashboard KPI Drilldowns
+    const cardsMapping = {
+        'card-dir-total-employees': { type: 'totalEmployees', title: 'Total Employees' },
+        'card-dir-present': { type: 'presentToday', title: 'Present Today' },
+        'card-dir-on-leave': { type: 'onLeave', title: 'On Leave' },
+        'card-dir-unmarked': { type: 'unmarked', title: 'Attendance Not Marked / Idle' },
+        'card-dir-total-sites': { type: 'totalSites', title: 'Total Sites' },
+        'card-dir-late-employees': { type: 'lateEmployees', title: 'Late Arrivals' },
+        'card-dir-sites-no-engineer': { type: 'sitesWithoutEngineers', title: 'Sites Without Engineer (30d)' },
+        'card-dir-sites-at-risk': { type: 'sitesAtRisk', title: 'Sites At Risk (7d gap)' },
+        'card-dir-total-engineers': { type: 'totalSiteEngineers', title: 'Total Site Engineers' },
+        'card-dir-deployed-engineers': { type: 'deployedSiteEngineers', title: 'Deployed Site Engineers' },
+        'card-dir-idle-engineers': { type: 'idleSiteEngineers', title: 'Idle Site Engineers' },
+        'card-dir-engineers-leave': { type: 'siteEngineersOnLeave', title: 'Site Engineers On Leave / LWP' }
+    };
+
+    Object.keys(cardsMapping).forEach(cardId => {
+        document.getElementById(cardId)?.addEventListener('click', () => {
+            const info = cardsMapping[cardId];
+            openDirectorKPIModal(info.type, info.title);
+        });
+    });
+
+    // Close Director Modal events
+    document.getElementById('director-modal-close')?.addEventListener('click', closeDirectorModal);
+    document.getElementById('director-modal')?.addEventListener('click', (e) => {
+        if (e.target === document.getElementById('director-modal')) {
+            closeDirectorModal();
+        }
+    });
+
+    // 8. Initialize layout data loading
     init();
 });
+
+// ── SECTION 6: DIRECTOR DASHBOARD CONTROLLER
+
+let dirChartAttendanceTrends = null;
+let dirChartWorkforceShare = null;
+let directorDataCache = null;
+
+async function fetchDirectorData() {
+    const picker = document.getElementById('director-date-picker');
+    const targetDate = picker ? picker.value : '2026-06-04';
+    
+    const API_BASE_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+        ? 'http://127.0.0.1:5000/api/v1'
+        : '/api/v1';
+
+    try {
+        const response = await fetch(`${API_BASE_URL}/dashboard/director-data?date=${targetDate}`);
+        if (!response.ok) throw new Error('API server returned bad status code');
+        const result = await response.json();
+        
+        directorDataCache = result.data;
+        renderDirectorDashboard(directorDataCache);
+
+        // Load and draw map markers
+        loadGoogleMapsScript(() => {
+            renderGoogleMap(directorDataCache.engineerLocations || []);
+        }, directorDataCache.googleMapsApiKey);
+    } catch (err) {
+        console.error('Error fetching Director Dashboard data:', err);
+    }
+}
+
+function renderDirectorDashboard(data) {
+    if (!data) return;
+
+    const { workforce, siteOperations, engineerUtilization, projectPerformance, managerPerformance, alerts, charts } = data;
+
+    // 1. Render KPIs
+    document.getElementById('dir-kpi-total-employees').textContent = workforce.totalEmployees;
+    
+    document.getElementById('dir-kpi-present').textContent = 
+        `${workforce.presentToday} (${(workforce.presentToday / (workforce.totalEmployees || 1) * 100).toFixed(1)}%)`;
+        
+    document.getElementById('dir-kpi-on-leave').textContent = 
+        `${workforce.onLeave} (${(workforce.onLeave / (workforce.totalEmployees || 1) * 100).toFixed(1)}%)`;
+        
+    document.getElementById('dir-kpi-unmarked').textContent = 
+        `${workforce.attendanceNotMarked} (${(workforce.attendanceNotMarked / (workforce.totalEmployees || 1) * 100).toFixed(1)}%)`;
+
+    document.getElementById('dir-kpi-total-sites').textContent = siteOperations.totalSites;
+    document.getElementById('dir-kpi-late-employees').textContent = workforce.lateEmployees;
+    document.getElementById('dir-kpi-sites-no-engineer').textContent = siteOperations.sitesWithoutEngineers;
+    document.getElementById('dir-kpi-sites-at-risk').textContent = siteOperations.sitesAtRisk;
+
+    document.getElementById('dir-kpi-total-engineers').textContent = engineerUtilization.totalEngineers;
+    
+    document.getElementById('dir-kpi-deployed-engineers').textContent = 
+        `${engineerUtilization.deployedEngineers} (${(engineerUtilization.deployedEngineers / (engineerUtilization.totalEngineers || 1) * 100).toFixed(1)}%)`;
+        
+    document.getElementById('dir-kpi-idle-engineers').textContent = 
+        `${engineerUtilization.idleEngineers} (${(engineerUtilization.idleEngineers / (engineerUtilization.totalEngineers || 1) * 100).toFixed(1)}%)`;
+        
+    document.getElementById('dir-kpi-engineers-leave').textContent = 
+        `${engineerUtilization.onLeave} (${(engineerUtilization.onLeave / (engineerUtilization.totalEngineers || 1) * 100).toFixed(1)}%)`;
+
+    // 2. Render Critical Alerts Banner
+    const alertsContainer = document.getElementById('director-alerts-container');
+    alertsContainer.innerHTML = '';
+    let hasAlerts = false;
+
+    if (alerts.highAbsenteeism > 20) {
+        hasAlerts = true;
+        alertsContainer.innerHTML += `
+            <div class="alert-card danger">
+                <i data-lucide="alert-triangle"></i>
+                <div class="alert-content">
+                    <span class="alert-title">High Absenteeism Warning</span>
+                    <span class="alert-desc">Today's absenteeism rate is at ${alerts.highAbsenteeism}%, exceeding the 20% limit.</span>
+                </div>
+            </div>
+        `;
+    }
+    if (alerts.highLwpCount > 3) {
+        hasAlerts = true;
+        alertsContainer.innerHTML += `
+            <div class="alert-card warning">
+                <i data-lucide="alert-circle"></i>
+                <div class="alert-content">
+                    <span class="alert-title">High LWP Leave Volume</span>
+                    <span class="alert-desc">There are ${alerts.highLwpCount} employees on Loss of Pay (LWP) leave today.</span>
+                </div>
+            </div>
+        `;
+    }
+    if (alerts.projectsBehind && alerts.projectsBehind.length > 0) {
+        hasAlerts = true;
+        const projectNames = alerts.projectsBehind.map(p => `${p.name} (${p.achievementPercent}%)`).join(', ');
+        alertsContainer.innerHTML += `
+            <div class="alert-card danger">
+                <i data-lucide="alert-triangle"></i>
+                <div class="alert-content">
+                    <span class="alert-title">Projects Behind Target</span>
+                    <span class="alert-desc">The following projects have site completion rates below 80%: ${projectNames}.</span>
+                </div>
+            </div>
+        `;
+    }
+    if (alerts.sitesWithoutEngineers && alerts.sitesWithoutEngineers.length > 0) {
+        hasAlerts = true;
+        alertsContainer.innerHTML += `
+            <div class="alert-card warning">
+                <i data-lucide="alert-circle"></i>
+                <div class="alert-content">
+                    <span class="alert-title">Active Sites Without Staffing</span>
+                    <span class="alert-desc">There are ${alerts.sitesWithoutEngineers.length} active sites with no check-in recorded for over 30 days.</span>
+                </div>
+            </div>
+        `;
+    }
+    if (alerts.idleEngineers && alerts.idleEngineers.length > 0) {
+        hasAlerts = true;
+        alertsContainer.innerHTML += `
+            <div class="alert-card warning">
+                <i data-lucide="alert-circle"></i>
+                <div class="alert-content">
+                    <span class="alert-title">Idle Field Engineers</span>
+                    <span class="alert-desc">${alerts.idleEngineers.length} site technicians have had no check-in recorded in the last 5 days.</span>
+                </div>
+            </div>
+        `;
+    }
+    if (!hasAlerts) {
+        alertsContainer.innerHTML = `<div style="grid-column: 1 / -1; text-align: center; color: var(--primary-green); padding: 12px; font-weight: 600;">All operational metrics within standard tolerances. No critical warnings today.</div>`;
+    }
+
+    if (window.lucide) {
+        window.lucide.createIcons();
+    }
+
+    // 3. Render Tables
+    // Project Manager Team Utilization Table
+    const pmBody = document.getElementById('dir-pm-performance-table-body');
+    pmBody.innerHTML = '';
+    if (managerPerformance.length === 0) {
+        pmBody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: #888;">No manager data.</td></tr>';
+    } else {
+        managerPerformance.forEach(pm => {
+            pmBody.innerHTML += `
+                <tr>
+                    <td><strong>${pm.name}</strong></td>
+                    <td style="text-align: center;">${pm.teamSize}</td>
+                    <td style="text-align: center;">${pm.deployedCount}</td>
+                    <td style="text-align: center;">
+                        <span class="badge-pill ${pm.utilizationPercent >= 80 ? 'green' : pm.utilizationPercent >= 50 ? 'blue' : 'red'}" style="padding: 4px 10px; font-weight: bold;">
+                             ${pm.utilizationPercent}%
+                        </span>
+                    </td>
+                </tr>
+            `;
+        });
+    }
+
+    // Project Health Table
+    const projectBody = document.getElementById('dir-project-health-table-body');
+    projectBody.innerHTML = '';
+    if (projectPerformance.length === 0) {
+        projectBody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: #888;">No project data.</td></tr>';
+    } else {
+        projectPerformance.forEach(p => {
+            projectBody.innerHTML += `
+                <tr>
+                    <td><strong>${p.name}</strong></td>
+                    <td style="text-align: center;">${p.totalSites}</td>
+                    <td style="text-align: center;">${p.completedSites}</td>
+                    <td style="text-align: center;">${p.pendingSites}</td>
+                    <td style="text-align: center;">
+                        <span class="badge-pill ${p.achievementPercent >= 80 ? 'green' : 'blue'}" style="padding: 4px 10px; font-weight: bold;">
+                             ${p.achievementPercent}%
+                        </span>
+                    </td>
+                </tr>
+            `;
+        });
+    }
+
+    // Idle Engineers Table
+    const idleBody = document.getElementById('dir-idle-engineers-table-body');
+    idleBody.innerHTML = '';
+    if (alerts.idleEngineers.length === 0) {
+        idleBody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: #888;">No idle engineers.</td></tr>';
+    } else {
+        alerts.idleEngineers.forEach(eng => {
+            idleBody.innerHTML += `
+                <tr>
+                    <td>${eng.employeeId || 'N/A'}</td>
+                    <td><strong>${eng.fullName}</strong></td>
+                    <td>${eng.designation || 'Staff'}</td>
+                    <td>${eng.managerName}</td>
+                </tr>
+            `;
+        });
+    }
+
+    // Sites At Risk Table
+    const sitesRiskBody = document.getElementById('dir-sites-risk-table-body');
+    sitesRiskBody.innerHTML = '';
+    if (alerts.sitesWithoutEngineers.length === 0) {
+        sitesRiskBody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: #888;">No unstaffed sites.</td></tr>';
+    } else {
+        alerts.sitesWithoutEngineers.forEach(s => {
+            sitesRiskBody.innerHTML += `
+                <tr>
+                    <td>${s.siteId || 'N/A'}</td>
+                    <td><strong>${s.name}</strong></td>
+                    <td>${s.projectName}</td>
+                    <td>${s.state} / ${s.district}</td>
+                </tr>
+            `;
+        });
+    }
+
+    // 4. Render Charts
+    renderDirectorCharts(charts);
+}
+
+function renderDirectorCharts(chartData) {
+    // 30 Days Attendance Trends Chart
+    const trendDates = chartData.attendanceTrend.map(t => {
+        const d = new Date(t.date);
+        return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    });
+    const presentData = chartData.attendanceTrend.map(t => t.present);
+    const leaveData = chartData.attendanceTrend.map(t => t.leave);
+    const absentData = chartData.attendanceTrend.map(t => t.absent);
+
+    const trendOptions = {
+        series: [
+            { name: 'Present', data: presentData },
+            { name: 'On Leave', data: leaveData },
+            { name: 'Absent / Idle', data: absentData }
+        ],
+        chart: {
+            type: 'area',
+            height: 350,
+            toolbar: { show: false }
+        },
+        colors: ['#10b981', '#f59e0b', '#ef4444'],
+        stroke: { curve: 'smooth', width: 2 },
+        fill: { type: 'gradient', gradient: { opacityFrom: 0.3, opacityTo: 0.05 } },
+        xaxis: { categories: trendDates },
+        yaxis: { min: 0 },
+        legend: { position: 'top' }
+    };
+
+    if (dirChartAttendanceTrends) dirChartAttendanceTrends.destroy();
+    dirChartAttendanceTrends = new ApexCharts(document.querySelector("#dir-attendance-trends-chart"), trendOptions);
+    dirChartAttendanceTrends.render();
+
+    // Workforce Share Donut Chart
+    const shareOptions = {
+        series: [chartData.workforceDistribution.present, chartData.workforceDistribution.leave, chartData.workforceDistribution.absent],
+        labels: ['Present', 'On Leave', 'Absent / Idle'],
+        chart: { type: 'donut', height: 350 },
+        colors: ['#10b981', '#f59e0b', '#ef4444'],
+        legend: { position: 'bottom' }
+    };
+
+    if (dirChartWorkforceShare) dirChartWorkforceShare.destroy();
+    dirChartWorkforceShare = new ApexCharts(document.querySelector("#dir-workforce-share-chart"), shareOptions);
+    dirChartWorkforceShare.render();
+}
+
+// Export lists using ExcelJS
+async function exportDirIdleEngineers() {
+    if (!directorDataCache || !directorDataCache.alerts.idleEngineers.length) {
+        alert('No idle engineers records to export.');
+        return;
+    }
+
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Idle Engineers');
+
+    worksheet.columns = [
+        { header: 'Employee ID', key: 'employeeId', width: 15 },
+        { header: 'Employee Name', key: 'fullName', width: 25 },
+        { header: 'Designation', key: 'designation', width: 25 },
+        { header: 'Manager Name', key: 'managerName', width: 25 }
+    ];
+
+    directorDataCache.alerts.idleEngineers.forEach(eng => {
+        worksheet.addRow(eng);
+    });
+
+    worksheet.getRow(1).font = { bold: true };
+    const filename = `IdleEngineers_Report.xlsx`;
+    await downloadExcelWorkbook(workbook, filename);
+}
+
+async function exportDirSitesAtRisk() {
+    if (!directorDataCache || !directorDataCache.alerts.sitesWithoutEngineers.length) {
+        alert('No unstaffed sites records to export.');
+        return;
+    }
+
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Sites At Risk');
+
+    worksheet.columns = [
+        { header: 'Site ID', key: 'siteId', width: 15 },
+        { header: 'Site Name', key: 'name', width: 25 },
+        { header: 'Project / Customer', key: 'projectName', width: 25 },
+        { header: 'State', key: 'state', width: 15 },
+        { header: 'District', key: 'district', width: 15 }
+    ];
+
+    directorDataCache.alerts.sitesWithoutEngineers.forEach(s => {
+        worksheet.addRow(s);
+    });
+
+    worksheet.getRow(1).font = { bold: true };
+    const filename = `SitesAtRisk_Report.xlsx`;
+    await downloadExcelWorkbook(workbook, filename);
+}
+
+// ── SECTION 7: DYNAMIC GOOGLE MAPS AND DRILLDOWNS
+
+function loadGoogleMapsScript(callback, apiKey) {
+    if (window.google && window.google.maps) {
+        if (callback) callback();
+        return;
+    }
+    if (document.querySelector('script[src*="maps.googleapis.com"]')) {
+        const checkInterval = setInterval(() => {
+            if (window.google && window.google.maps) {
+                clearInterval(checkInterval);
+                if (callback) callback();
+            }
+        }, 100);
+        return;
+    }
+    if (!apiKey) {
+        // Wait until we have the API key from backend before adding the script
+        return;
+    }
+    const script = document.createElement('script');
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}`;
+    script.async = true;
+    script.defer = true;
+    script.onload = () => {
+        if (callback) callback();
+    };
+    document.head.appendChild(script);
+}
+
+let googleMapInstance = null;
+let mapMarkers = [];
+
+function renderGoogleMap(locations) {
+    const mapElement = document.getElementById('director-map');
+    if (!mapElement) return;
+
+    if (!window.google || !window.google.maps) {
+        console.warn('Google Maps API not loaded.');
+        return;
+    }
+
+    if (!googleMapInstance) {
+        googleMapInstance = new google.maps.Map(mapElement, {
+            center: { lat: 20.5937, lng: 78.9629 }, // Center of India
+            zoom: 5,
+            styles: [
+                {
+                    "featureType": "administrative",
+                    "elementType": "labels.text.fill",
+                    "textColor": "#444444"
+                },
+                {
+                    "featureType": "landscape",
+                    "elementType": "all",
+                    "color": "#f2f2f2"
+                },
+                {
+                    "featureType": "poi",
+                    "elementType": "all",
+                    "visibility": "off"
+                },
+                {
+                    "featureType": "road",
+                    "elementType": "all",
+                    "visibility": "simplified"
+                },
+                {
+                    "featureType": "transit",
+                    "elementType": "all",
+                    "visibility": "off"
+                },
+                {
+                    "featureType": "water",
+                    "elementType": "all",
+                    "color": "#c8d7f4"
+                }
+            ]
+        });
+    }
+
+    // Clear existing markers
+    mapMarkers.forEach(m => m.setMap(null));
+    mapMarkers = [];
+
+    const infoWindow = new google.maps.InfoWindow();
+
+    // Palette of vibrant, fixed colors for different projects/sites
+    const getProjectColor = (customerName) => {
+        if (!customerName) return '#6b7280'; // Slate Gray for unknown
+        const name = customerName.trim();
+        const lower = name.toLowerCase();
+        if (lower.includes('hero')) return '#dc2626'; // Vibrant Red
+        if (lower.includes('reliance') || lower.includes('bp mobility')) return '#2563eb'; // Vibrant Blue
+        if (lower.includes('v-green hpcl') || lower.includes('hpcl')) return '#10b981'; // Vibrant Green
+        if (lower.includes('v-green b2c')) return '#06b6d4'; // Vibrant Cyan/Teal
+        return '#6b7280'; // Slate Gray fallback
+    };
+
+    locations.forEach(loc => {
+        if (!loc.lat || !loc.lng) return;
+
+        const projectColor = getProjectColor(loc.customerName);
+
+        const marker = new google.maps.Marker({
+            position: { lat: parseFloat(loc.lat), lng: parseFloat(loc.lng) },
+            map: googleMapInstance,
+            title: loc.engineerName,
+            icon: {
+                path: google.maps.SymbolPath.CIRCLE,
+                scale: 11, // Increased scale to make dots bigger
+                fillColor: projectColor, // project-specific color
+                fillOpacity: 0.9,
+                strokeWeight: 2,
+                strokeColor: '#ffffff'
+            }
+        });
+
+        marker.addListener('click', () => {
+            const contentString = `
+                <div style="font-family: 'Public Sans', sans-serif; padding: 10px 14px; font-size: 13px; line-height: 1.6; color: #374151; max-width: 280px; border-radius: 8px;">
+                    <h4 style="margin: 0 0 8px 0; font-size: 15px; font-weight: 700; color: #1e1b4b; border-bottom: 2px solid ${projectColor}; padding-bottom: 6px; display: flex; align-items: center; gap: 6px;">
+                        <span style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background-color: ${projectColor};"></span>
+                        ${loc.engineerName}
+                    </h4>
+                    <div style="display: grid; gap: 4px;">
+                        <p style="margin: 0;"><strong>Customer:</strong> ${loc.customerName}</p>
+                        <p style="margin: 0;"><strong>Site Name:</strong> ${loc.siteName}</p>
+                        <p style="margin: 0;"><strong>Location:</strong> ${[loc.district, loc.state].filter(Boolean).join(', ') || 'N/A'}</p>
+                        <p style="margin: 0;"><strong>Reporting Manager:</strong> <span style="font-weight: 600; color: #4f46e5;">${loc.managerName || 'N/A'}</span></p>
+                        <p style="margin: 0; border-top: 1px dashed #e5e7eb; margin-top: 6px; padding-top: 6px; font-size: 12px; color: #6b7280;">
+                            <strong>Checked In:</strong> ${loc.checkInTime}
+                        </p>
+                    </div>
+                </div>
+            `;
+            infoWindow.setContent(contentString);
+            infoWindow.open(googleMapInstance, marker);
+        });
+
+        mapMarkers.push(marker);
+    });
+
+    if (locations.length > 0) {
+        const bounds = new google.maps.LatLngBounds();
+        locations.forEach(loc => {
+            bounds.extend({ lat: parseFloat(loc.lat), lng: parseFloat(loc.lng) });
+        });
+        googleMapInstance.fitBounds(bounds);
+        
+        const listener = google.maps.event.addListener(googleMapInstance, 'idle', () => {
+            if (googleMapInstance.getZoom() > 10) {
+                googleMapInstance.setZoom(10);
+            }
+            google.maps.event.removeListener(listener);
+        });
+    } else {
+        googleMapInstance.setCenter({ lat: 20.5937, lng: 78.9629 });
+        googleMapInstance.setZoom(5);
+    }
+}
+
+function openDirectorKPIModal(type, title) {
+    const modal = document.getElementById('director-modal');
+    const titleEl = document.getElementById('director-modal-title');
+    const headerEl = document.getElementById('director-modal-table-header');
+    const bodyEl = document.getElementById('director-modal-table-body');
+    const exportBtn = document.getElementById('director-modal-export-btn');
+
+    if (!modal || !bodyEl || !directorDataCache) return;
+
+    titleEl.textContent = `${title} Details`;
+    headerEl.innerHTML = '';
+    bodyEl.innerHTML = '';
+
+    const records = directorDataCache.details[type] || [];
+
+    let columns = [];
+    if (['totalEmployees', 'unmarked', 'totalSiteEngineers', 'idleSiteEngineers'].includes(type)) {
+        columns = ['Emp ID', 'Full Name', 'Designation', 'Base Location', 'Manager'];
+    } else if (['presentToday', 'lateEmployees', 'deployedSiteEngineers'].includes(type)) {
+        columns = ['Emp ID', 'Full Name', 'Designation', 'Site Name', 'Check-In Time'];
+    } else if (['onLeave', 'siteEngineersOnLeave'].includes(type)) {
+        columns = ['Emp ID', 'Full Name', 'Designation', 'Leave Type', 'Duration', 'Manager'];
+    } else if (['totalSites', 'sitesWithoutEngineers', 'sitesAtRisk'].includes(type)) {
+        columns = ['Site ID', 'Site Name', 'Project / Customer', 'Status', 'State / District'];
+    }
+
+    const trHead = document.createElement('tr');
+    columns.forEach(col => {
+        const th = document.createElement('th');
+        th.textContent = col;
+        if (col === 'Duration' || col === 'Check-In Time' || col === 'Status') {
+            th.style.textAlign = 'center';
+        }
+        trHead.appendChild(th);
+    });
+    headerEl.appendChild(trHead);
+
+    if (records.length === 0) {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td colspan="${columns.length}" style="text-align: center; color: #888; padding: 20px;">No records available.</td>`;
+        bodyEl.appendChild(tr);
+    } else {
+        records.forEach(r => {
+            const tr = document.createElement('tr');
+            if (['totalEmployees', 'unmarked', 'totalSiteEngineers', 'idleSiteEngineers'].includes(type)) {
+                tr.innerHTML = `
+                    <td>${r.employeeId || 'N/A'}</td>
+                    <td><strong>${r.fullName}</strong></td>
+                    <td>${r.designation}</td>
+                    <td>${r.baseLocation}</td>
+                    <td>${r.managerName}</td>
+                `;
+            } else if (['presentToday', 'lateEmployees', 'deployedSiteEngineers'].includes(type)) {
+                tr.innerHTML = `
+                    <td>${r.employeeId || 'N/A'}</td>
+                    <td><strong>${r.fullName}</strong></td>
+                    <td>${r.designation}</td>
+                    <td>${r.siteName}</td>
+                    <td style="text-align: center;"><span class="badge-pill blue">${r.checkInTime}</span></td>
+                `;
+            } else if (['onLeave', 'siteEngineersOnLeave'].includes(type)) {
+                tr.innerHTML = `
+                    <td>${r.employeeId || 'N/A'}</td>
+                    <td><strong>${r.fullName}</strong></td>
+                    <td>${r.designation}</td>
+                    <td style="text-align: center;"><span class="badge-pill orange">${r.type}</span></td>
+                    <td style="text-align: center;"><strong>${r.duration} Days</strong></td>
+                    <td>${r.managerName}</td>
+                `;
+            } else if (['totalSites', 'sitesWithoutEngineers', 'sitesAtRisk'].includes(type)) {
+                tr.innerHTML = `
+                    <td>${r.siteId || 'N/A'}</td>
+                    <td><strong>${r.name}</strong></td>
+                    <td>${r.projectName}</td>
+                    <td style="text-align: center;"><span class="badge-pill green">${r.status}</span></td>
+                    <td>${r.state} / ${r.district}</td>
+                `;
+            }
+            bodyEl.appendChild(tr);
+        });
+    }
+
+    const newExportBtn = exportBtn.cloneNode(true);
+    exportBtn.parentNode.replaceChild(newExportBtn, exportBtn);
+    newExportBtn.addEventListener('click', () => exportDirectorKPIDrilldown(type, title, records));
+
+    if (window.lucide) {
+        window.lucide.createIcons();
+    }
+
+    modal.classList.add('active');
+}
+
+function closeDirectorModal() {
+    const modal = document.getElementById('director-modal');
+    if (modal) modal.classList.remove('active');
+}
+
+async function exportDirectorKPIDrilldown(type, title, records) {
+    if (!records || records.length === 0) {
+        alert("No records to export.");
+        return;
+    }
+
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet(title.substring(0, 31));
+
+    let columns = [];
+    if (['totalEmployees', 'unmarked', 'totalSiteEngineers', 'idleSiteEngineers'].includes(type)) {
+        columns = [
+            { header: 'Employee ID', key: 'employeeId', width: 15 },
+            { header: 'Full Name', key: 'fullName', width: 25 },
+            { header: 'Designation', key: 'designation', width: 25 },
+            { header: 'Base Location', key: 'baseLocation', width: 20 },
+            { header: 'Reporting Manager', key: 'managerName', width: 25 }
+        ];
+    } else if (['presentToday', 'lateEmployees', 'deployedSiteEngineers'].includes(type)) {
+        columns = [
+            { header: 'Employee ID', key: 'employeeId', width: 15 },
+            { header: 'Full Name', key: 'fullName', width: 25 },
+            { header: 'Designation', key: 'designation', width: 25 },
+            { header: 'Site Name', key: 'siteName', width: 30 },
+            { header: 'Customer Name', key: 'customerName', width: 30 },
+            { header: 'Check-In Time', key: 'checkInTime', width: 15 }
+        ];
+    } else if (['onLeave', 'siteEngineersOnLeave'].includes(type)) {
+        columns = [
+            { header: 'Employee ID', key: 'employeeId', width: 15 },
+            { header: 'Full Name', key: 'fullName', width: 25 },
+            { header: 'Designation', key: 'designation', width: 25 },
+            { header: 'Leave Type', key: 'type', width: 15 },
+            { header: 'Start Date', key: 'startDate', width: 15 },
+            { header: 'End Date', key: 'endDate', width: 15 },
+            { header: 'Duration (Days)', key: 'duration', width: 15 },
+            { header: 'Reporting Manager', key: 'managerName', width: 25 }
+        ];
+    } else if (['totalSites', 'sitesWithoutEngineers', 'sitesAtRisk'].includes(type)) {
+        columns = [
+            { header: 'Site ID', key: 'siteId', width: 15 },
+            { header: 'Site Name', key: 'name', width: 30 },
+            { header: 'Project / Customer', key: 'projectName', width: 30 },
+            { header: 'Status', key: 'status', width: 15 },
+            { header: 'State', key: 'state', width: 20 },
+            { header: 'District', key: 'district', width: 20 }
+        ];
+    }
+
+    worksheet.columns = columns;
+
+    records.forEach(r => {
+        const rowVal = { ...r };
+        if (rowVal.startDate) rowVal.startDate = formatDateToCustomStr(rowVal.startDate);
+        if (rowVal.endDate) rowVal.endDate = formatDateToCustomStr(rowVal.endDate);
+        worksheet.addRow(rowVal);
+    });
+
+    const headerRow = worksheet.getRow(1);
+    headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    headerRow.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FF6366F1' }
+    };
+    headerRow.alignment = { horizontal: 'left', vertical: 'middle' };
+
+    worksheet.eachRow(row => {
+        row.eachCell(cell => {
+            cell.border = {
+                top: { style: 'thin', color: { argb: 'FFE5E7EB' } },
+                left: { style: 'thin', color: { argb: 'FFE5E7EB' } },
+                bottom: { style: 'thin', color: { argb: 'FFE5E7EB' } },
+                right: { style: 'thin', color: { argb: 'FFE5E7EB' } }
+            };
+        });
+    });
+
+    const picker = document.getElementById('director-date-picker');
+    const targetDate = picker ? picker.value.replace(/-/g, '') : '';
+    const filename = `${title.replace(/\s+/g, '_')}_Report_${targetDate}.xlsx`;
+    await downloadExcelWorkbook(workbook, filename);
+}
+

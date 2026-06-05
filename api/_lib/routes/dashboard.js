@@ -402,6 +402,616 @@ router.get('/data', async (req, res) => {
     }
 });
 
+
+router.get('/director-data', async (req, res) => {
+    try {
+        const today = req.query.date || new Date().toISOString().split('T')[0];
+        const todayDate = new Date(today);
+        if (isNaN(todayDate)) {
+            return res.status(400).json({ success: false, error: 'Invalid date format' });
+        }
+
+        const getPastDateStr = (days) => {
+            const d = new Date(todayDate);
+            d.setDate(d.getDate() - days);
+            const year = d.getFullYear();
+            const month = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            return `${year}-${month}-${day}`;
+        };
+
+        const thirtyDaysAgo = getPastDateStr(30);
+        const sevenDaysAgo = getPastDateStr(7);
+        const fiveDaysAgo = getPastDateStr(5);
+
+        // Fetch all users to resolve manager full names and details
+        const allUsersForManagers = await User.find({}).select('_id fullName lastName email');
+        const userFullNameMap = {};
+        const userEmailFullNameMap = {};
+        allUsersForManagers.forEach(u => {
+            let name = u.fullName || '';
+            if (u.lastName) {
+                name += ' ' + u.lastName;
+            }
+            name = name.trim();
+            if (name) {
+                userFullNameMap[u._id.toString()] = name;
+                if (u.email) {
+                    userEmailFullNameMap[u.email.toLowerCase().trim()] = name;
+                }
+            }
+        });
+
+        const getEmpManagerName = (emp) => {
+            if (emp.managerId && userFullNameMap[emp.managerId.toString()]) {
+                return userFullNameMap[emp.managerId.toString()];
+            }
+            if (emp.managerDetails && emp.managerDetails.name) {
+                return emp.managerDetails.name;
+            }
+            if (emp.managerDetails && emp.managerDetails.email && userEmailFullNameMap[emp.managerDetails.email.toLowerCase().trim()]) {
+                return userEmailFullNameMap[emp.managerDetails.email.toLowerCase().trim()];
+            }
+            return 'N/A';
+        };
+
+        // 1. Get Active Employees, exempting Directors
+        const activeEmployees = await User.find({ 
+            isDeleted: false, 
+            isSuspended: false,
+            roleId: { $not: { $regex: /director/i } },
+            designation: { $not: { $regex: /director/i } }
+        });
+        const activeEmployeeIdsSet = new Set(activeEmployees.map(e => e._id.toString()));
+        const totalEmployees = activeEmployees.length || 1;
+
+        // Fetch ETPL customer ID dynamically to exclude its sites
+        const etplCust = await Customer.findOne({ name: /etpl/i });
+        const etplCustId = etplCust ? etplCust._id.toString() : null;
+
+        // 2. Fetch Sites (excluding ETPL)
+        const allSites = await Site.find({ isDeleted: false });
+        const sites = etplCustId 
+            ? allSites.filter(s => s.customerId && s.customerId.toString() !== etplCustId)
+            : allSites;
+        const totalSites = sites.length;
+
+        const statusBreakdown = {};
+        sites.forEach(s => {
+            const st = s.status || 'Planned';
+            statusBreakdown[st] = (statusBreakdown[st] || 0) + 1;
+        });
+
+        // 3. Customers (excluding ETPL)
+        const allCustomers = await Customer.find({ isDeleted: false });
+        const customersList = etplCustId 
+            ? allCustomers.filter(c => c._id.toString() !== etplCustId)
+            : allCustomers;
+
+        const customerMap = {};
+        allCustomers.forEach(c => {
+            customerMap[c._id.toString()] = c.name;
+        });
+
+        const siteMap = {};
+        const siteCustomerMap = {};
+        const siteDistrictMap = {};
+        const siteStateMap = {};
+        allSites.forEach(s => {
+            const sId = s._id.toString();
+            siteMap[sId] = s.name;
+            siteDistrictMap[sId] = s.district || '';
+            siteStateMap[sId] = s.state || '';
+            const cId = s.customerId?.toString();
+            siteCustomerMap[sId] = cId ? (customerMap[cId] || 'Unknown Customer') : 'Unknown Customer';
+        });
+
+        // 4. Attendance & Leave for today
+        const attendancesToday = await Attendance.find({ date: today }).lean();
+        // Filter out present user IDs that are active and not checking in at ETPL sites
+        const presentTodayActive = [];
+        attendancesToday.forEach(att => {
+            const uId = att.userId?.toString();
+            if (uId && activeEmployeeIdsSet.has(uId)) {
+                presentTodayActive.push(att.userId);
+            }
+        });
+        const presentTodayCount = presentTodayActive.length;
+
+        const leavesToday = await Leave.find({
+            status: 'Approved',
+            startDate: { $lte: today },
+            endDate: { $gte: today }
+        });
+        const leavesTodayActive = leavesToday.filter(l => l.userId && activeEmployeeIdsSet.has(l.userId.toString()));
+        const onLeaveCount = leavesTodayActive.length;
+
+        // Accounted User IDs today
+        const presentUserIdsStr = new Set(presentTodayActive.map(id => id.toString()));
+        const leaveUserIdsStr = new Set(leavesTodayActive.map(l => l.userId.toString()));
+        const accountedUserIds = new Set([...presentUserIdsStr, ...leaveUserIdsStr]);
+
+        const attendanceNotMarkedCount = activeEmployees.filter(e => !accountedUserIds.has(e._id.toString())).length;
+
+        // Shift start time at 9:45 AM (9:30 AM + 15m grace)
+        const shiftStartUnix = Math.floor(new Date(`${today}T09:45:00+05:30`).getTime() / 1000);
+        const lateAttendances = await Attendance.find({
+            date: today,
+            checkInTime: { $gt: shiftStartUnix }
+        });
+        const lateEmployeesToday = lateAttendances.filter(a => {
+            const uId = a.userId?.toString();
+            return uId && activeEmployeeIdsSet.has(uId);
+        });
+        const lateEmployeesCount = lateEmployeesToday.length;
+
+        const lwpLeavesToday = leavesTodayActive.filter(l => (l.type || '').toUpperCase() === 'LOSS OF PAY');
+        const onLeaveLwpCount = lwpLeavesToday.length;
+
+        // Travel proxy
+        const travelAttendances = await Attendance.find({
+            date: today,
+            checkInRemark: { $regex: /travel|tour|visit/i }
+        });
+        const travelingCount = travelAttendances.filter(a => {
+            const uId = a.userId?.toString();
+            return uId && activeEmployeeIdsSet.has(uId);
+        }).length;
+
+        const idleManpowerCount = attendanceNotMarkedCount;
+
+        // Site engineer filters
+        const isSiteEngineer = (emp) => {
+            const des = (emp.designation || '').toLowerCase();
+            const role = (emp.roleId || '').toLowerCase();
+            return des.includes('technician') || des.includes('engineer') || des.includes('field') || role.includes('technician') || role.includes('engineer');
+        };
+        const activeSiteEngineers = activeEmployees.filter(isSiteEngineer);
+        const activeSiteEngineerIdsSet = new Set(activeSiteEngineers.map(e => e._id.toString()));
+        const totalSiteEngineersCount = activeSiteEngineers.length;
+
+        const deployedSiteEngineers = presentTodayActive.filter(id => activeSiteEngineerIdsSet.has(id.toString()));
+        const deployedSiteEngineersCount = deployedSiteEngineers.length;
+
+        const idleSiteEngineersCount = activeSiteEngineers.filter(e => !presentUserIdsStr.has(e._id.toString()) && !leaveUserIdsStr.has(e._id.toString())).length;
+
+        const siteEngineersOnLeaveCount = leavesTodayActive.filter(l => l.userId && activeSiteEngineerIdsSet.has(l.userId.toString())).length;
+        const siteEngineersOnLwpCount = lwpLeavesToday.filter(l => l.userId && activeSiteEngineerIdsSet.has(l.userId.toString())).length;
+
+        // Sites without engineers
+        const activeSiteIds = await Attendance.find({ date: { $gte: thirtyDaysAgo } }).distinct('siteId');
+        const activeSiteIdsStr = new Set(activeSiteIds.map(id => id ? id.toString() : ''));
+        const sitesWithoutEngineers = sites.filter(s => !activeSiteIdsStr.has(s._id.toString()) && (s.status === 'Active'));
+        const sitesWithoutEngineersCount = sitesWithoutEngineers.length;
+
+        // Sites at risk
+        const recentSiteIds = await Attendance.find({ date: { $gte: sevenDaysAgo } }).distinct('siteId');
+        const recentSiteIdsStr = new Set(recentSiteIds.map(id => id ? id.toString() : ''));
+        const sitesAtRisk = sites.filter(s => !recentSiteIdsStr.has(s._id.toString()) && (s.status === 'Active'));
+        const sitesAtRiskCount = sitesAtRisk.length;
+
+        // 5. Project Performance Overview (excluding ETPL)
+        const projectPerformance = [];
+        for (const cust of customersList) {
+            const custSites = sites.filter(s => s.customerId && s.customerId.toString() === cust._id.toString());
+            const total = custSites.length;
+            const completed = custSites.filter(s => s.status === 'Completed' || s.status === 'HOTO').length;
+            const pending = total - completed;
+            const achievementPercent = total > 0 ? parseFloat(((completed / total) * 100).toFixed(1)) : 0;
+
+            projectPerformance.push({
+                customerId: cust._id,
+                name: cust.name,
+                totalSites: total,
+                completedSites: completed,
+                pendingSites: pending,
+                achievementPercent: achievementPercent
+            });
+        }
+
+        // 6. Project Manager Performance (utilization based on active employees only)
+        const managers = activeEmployees.filter(e => {
+            const des = (e.designation || '').toLowerCase();
+            const role = (e.roleId || '').toLowerCase();
+            return des.includes('project manager') || des.includes('pm') || role === 'manager';
+        });
+
+        const managerPerformance = [];
+        for (const pm of managers) {
+            const team = activeEmployees.filter(e => e.managerId && e.managerId.toString() === pm._id.toString());
+            const teamSize = team.length;
+            const deployed = team.filter(e => presentUserIdsStr.has(e._id.toString()));
+            const deployedCount = deployed.length;
+            const utilizationPercent = teamSize > 0 ? parseFloat(((deployedCount / teamSize) * 100).toFixed(1)) : 0;
+
+            managerPerformance.push({
+                _id: pm._id,
+                name: pm.fullName + (pm.lastName ? ' ' + pm.lastName : ''),
+                teamSize: teamSize,
+                deployedCount: deployedCount,
+                utilizationPercent: utilizationPercent
+            });
+        }
+
+        // 7. Manpower Planning
+        const manpowerPlanning = {
+            available: totalEmployees,
+            utilized: presentTodayActive.length,
+            idle: totalEmployees - presentTodayActive.length,
+            required: totalEmployees + 10,
+            gap: 10
+        };
+
+        // 8. Critical Alerts details
+        const recentlyActiveIds = await Attendance.find({ date: { $gte: fiveDaysAgo } }).distinct('userId');
+        const recentlyActiveIdsStr = new Set(recentlyActiveIds.map(id => id ? id.toString() : ''));
+        const idleEngineersAlert = activeSiteEngineers
+            .filter(e => !recentlyActiveIdsStr.has(e._id.toString()))
+            .map(e => ({
+                _id: e._id,
+                employeeId: e.employeeId,
+                fullName: e.fullName + (e.lastName ? ' ' + e.lastName : ''),
+                designation: e.designation,
+                managerName: getEmpManagerName(e)
+            }));
+
+        const sitesWithoutEngineerAlert = sitesWithoutEngineers.map(s => {
+            const cust = customersList.find(c => c._id.toString() === s.customerId?.toString());
+            return {
+                _id: s._id,
+                siteId: s.siteId,
+                name: s.name,
+                projectName: cust ? cust.name : 'Unknown Project',
+                state: s.state,
+                district: s.district
+            };
+        });
+
+        const projectsBehindTarget = projectPerformance.filter(p => p.achievementPercent < 80.0);
+        const highLwpCount = onLeaveLwpCount;
+        const absentCount = totalEmployees - (presentTodayActive.length + onLeaveCount);
+        const highAbsenteeismPercent = totalEmployees > 0 ? parseFloat(((absentCount / totalEmployees) * 100).toFixed(1)) : 0;
+
+        // 9. Fetch Site Engineer Geolocation Points
+        const engineerLocations = [];
+        attendancesToday.forEach(att => {
+            const uId = att.userId?.toString();
+            if (uId && activeEmployeeIdsSet.has(uId)) {
+                const emp = activeEmployees.find(e => e._id.toString() === uId);
+                if (emp && isSiteEngineer(emp)) {
+                    if (att.locationIn && att.locationIn.coordinates && att.locationIn.coordinates.length >= 2) {
+                        const sId = att.siteId?.toString();
+                        const siteName = sId ? (siteMap[sId] || 'Office') : 'Office';
+                        const customerName = sId ? (siteCustomerMap[sId] || 'ETPL') : 'ETPL';
+
+                        const checkInTimeFormatted = att.checkInTime 
+                            ? new Date(att.checkInTime * 1000).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })
+                            : 'N/A';
+                        
+                        engineerLocations.push({
+                            lat: att.locationIn.coordinates[1],
+                            lng: att.locationIn.coordinates[0],
+                            engineerName: emp.fullName + (emp.lastName ? ' ' + emp.lastName : ''),
+                            checkInTime: checkInTimeFormatted,
+                            siteName,
+                            customerName,
+                            managerName: getEmpManagerName(emp),
+                            district: sId ? (siteDistrictMap[sId] || '') : '',
+                            state: sId ? (siteStateMap[sId] || '') : ''
+                        });
+                    }
+                }
+            }
+        });
+
+        // 10. Construct Drilldown lists for all 12 KPI Cards
+        const detailTotalEmployees = activeEmployees.map(e => ({
+            employeeId: e.employeeId || 'N/A',
+            fullName: e.fullName + (e.lastName ? ' ' + e.lastName : ''),
+            designation: e.designation || 'Staff',
+            baseLocation: e.baseLocation || 'N/A',
+            managerName: getEmpManagerName(e)
+        }));
+
+        const detailPresentToday = [];
+        attendancesToday.forEach(att => {
+            const uId = att.userId?.toString();
+            if (uId && activeEmployeeIdsSet.has(uId)) {
+                const emp = activeEmployees.find(e => e._id.toString() === uId);
+                const sId = att.siteId?.toString();
+                const siteName = sId ? (siteMap[sId] || 'Office') : 'Office';
+                const customerName = sId ? (siteCustomerMap[sId] || 'ETPL') : 'ETPL';
+
+                const checkInTimeFormatted = att.checkInTime 
+                    ? new Date(att.checkInTime * 1000).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })
+                    : 'N/A';
+
+                detailPresentToday.push({
+                    employeeId: emp.employeeId || 'N/A',
+                    fullName: emp.fullName + (emp.lastName ? ' ' + emp.lastName : ''),
+                    designation: emp.designation || 'Staff',
+                    siteName,
+                    customerName,
+                    checkInTime: checkInTimeFormatted
+                });
+            }
+        });
+
+        const detailOnLeave = leavesTodayActive.map(l => {
+            const emp = activeEmployees.find(e => e._id.toString() === l.userId.toString());
+            return {
+                employeeId: emp ? emp.employeeId : 'N/A',
+                fullName: emp ? emp.fullName + (emp.lastName ? ' ' + emp.lastName : '') : 'Unknown',
+                designation: emp ? emp.designation : 'Staff',
+                type: l.type || 'Other',
+                startDate: l.startDate,
+                endDate: l.endDate,
+                duration: l.amount || 1,
+                managerName: emp ? getEmpManagerName(emp) : 'N/A'
+            };
+        });
+
+        const detailUnmarked = activeEmployees.filter(e => !accountedUserIds.has(e._id.toString())).map(e => ({
+            employeeId: e.employeeId || 'N/A',
+            fullName: e.fullName + (e.lastName ? ' ' + e.lastName : ''),
+            designation: e.designation || 'Staff',
+            baseLocation: e.baseLocation || 'N/A',
+            managerName: getEmpManagerName(e)
+        }));
+
+        const detailTotalSites = sites.map(s => {
+            const cust = customersList.find(c => c._id.toString() === s.customerId?.toString());
+            return {
+                siteId: s.siteId || 'N/A',
+                name: s.name,
+                projectName: cust ? cust.name : 'Unknown Project',
+                status: s.status || 'Planned',
+                state: s.state || 'N/A',
+                district: s.district || 'N/A'
+            };
+        });
+
+        const detailLateEmployees = [];
+        lateEmployeesToday.forEach(att => {
+            const emp = activeEmployees.find(e => e._id.toString() === att.userId?.toString());
+            if (emp) {
+                const sId = att.siteId?.toString();
+                const siteName = sId ? (siteMap[sId] || 'Office') : 'Office';
+                const checkInTimeFormatted = att.checkInTime 
+                    ? new Date(att.checkInTime * 1000).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })
+                    : 'N/A';
+                detailLateEmployees.push({
+                    employeeId: emp.employeeId || 'N/A',
+                    fullName: emp.fullName + (emp.lastName ? ' ' + emp.lastName : ''),
+                    designation: emp.designation || 'Staff',
+                    siteName,
+                    checkInTime: checkInTimeFormatted
+                });
+            }
+        });
+
+        const detailSitesWithoutEngineers = sitesWithoutEngineers.map(s => {
+            const cust = customersList.find(c => c._id.toString() === s.customerId?.toString());
+            return {
+                siteId: s.siteId || 'N/A',
+                name: s.name,
+                projectName: cust ? cust.name : 'Unknown Project',
+                status: s.status || 'Planned',
+                state: s.state || 'N/A',
+                district: s.district || 'N/A'
+            };
+        });
+
+        const detailSitesAtRisk = sitesAtRisk.map(s => {
+            const cust = customersList.find(c => c._id.toString() === s.customerId?.toString());
+            return {
+                siteId: s.siteId || 'N/A',
+                name: s.name,
+                projectName: cust ? cust.name : 'Unknown Project',
+                status: s.status || 'Planned',
+                state: s.state || 'N/A',
+                district: s.district || 'N/A'
+            };
+        });
+
+        const detailTotalSiteEngineers = activeSiteEngineers.map(e => ({
+            employeeId: e.employeeId || 'N/A',
+            fullName: e.fullName + (e.lastName ? ' ' + e.lastName : ''),
+            designation: e.designation || 'Staff',
+            baseLocation: e.baseLocation || 'N/A',
+            managerName: getEmpManagerName(e)
+        }));
+
+        const detailDeployedSiteEngineers = [];
+        attendancesToday.forEach(att => {
+            const uId = att.userId?.toString();
+            if (uId && activeSiteEngineerIdsSet.has(uId)) {
+                const emp = activeSiteEngineers.find(e => e._id.toString() === uId);
+                const sId = att.siteId?.toString();
+                const siteName = sId ? (siteMap[sId] || 'Office') : 'Office';
+                const customerName = sId ? (siteCustomerMap[sId] || 'ETPL') : 'ETPL';
+
+                const checkInTimeFormatted = att.checkInTime 
+                    ? new Date(att.checkInTime * 1000).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })
+                    : 'N/A';
+
+                detailDeployedSiteEngineers.push({
+                    employeeId: emp.employeeId || 'N/A',
+                    fullName: emp.fullName + (emp.lastName ? ' ' + emp.lastName : ''),
+                    designation: emp.designation || 'Staff',
+                    siteName,
+                    checkInTime: checkInTimeFormatted
+                });
+            }
+        });
+
+        const detailIdleSiteEngineers = activeSiteEngineers.filter(e => !presentUserIdsStr.has(e._id.toString()) && !leaveUserIdsStr.has(e._id.toString())).map(e => ({
+            employeeId: e.employeeId || 'N/A',
+            fullName: e.fullName + (e.lastName ? ' ' + e.lastName : ''),
+            designation: e.designation || 'Staff',
+            baseLocation: e.baseLocation || 'N/A',
+            managerName: getEmpManagerName(e)
+        }));
+
+        const detailSiteEngineersOnLeave = leavesTodayActive.filter(l => l.userId && activeSiteEngineerIdsSet.has(l.userId.toString())).map(l => {
+            const emp = activeEmployees.find(e => e._id.toString() === l.userId.toString());
+            return {
+                employeeId: emp ? emp.employeeId : 'N/A',
+                fullName: emp ? emp.fullName + (emp.lastName ? ' ' + emp.lastName : '') : 'Unknown',
+                designation: emp ? emp.designation : 'Staff',
+                type: l.type || 'Other',
+                startDate: l.startDate,
+                endDate: l.endDate,
+                duration: l.amount || 1,
+                managerName: emp ? getEmpManagerName(emp) : 'N/A'
+            };
+        });
+
+        // 11. Trends (Last 30 Days)
+        const startDateStr = getPastDateStr(29);
+        const endDateStr = getPastDateStr(0);
+
+        const allAttendancesTrend = await Attendance.find({
+            date: { $gte: startDateStr, $lte: endDateStr }
+        }).select('userId date siteId').lean();
+
+        const allLeavesTrend = await Leave.find({
+            status: 'Approved',
+            $or: [
+                { startDate: { $lte: endDateStr }, endDate: { $gte: startDateStr } }
+            ]
+        }).select('userId startDate endDate').lean();
+
+        const attendancesByDate = {};
+        allAttendancesTrend.forEach(a => {
+            if (!a.date) return;
+            const sId = a.siteId?.toString();
+            const customerName = sId ? (siteCustomerMap[sId] || 'Office') : 'Office';
+            if (customerName === 'ETPL') return; // Exclude ETPL from 30 day trends
+
+            if (!attendancesByDate[a.date]) {
+                attendancesByDate[a.date] = new Set();
+            }
+            if (a.userId) {
+                attendancesByDate[a.date].add(a.userId.toString());
+            }
+        });
+
+        const leavesByDate = {};
+        allLeavesTrend.forEach(l => {
+            if (!l.userId || !activeEmployeeIdsSet.has(l.userId.toString())) return;
+            const start = new Date(l.startDate);
+            const end = l.endDate ? new Date(l.endDate) : new Date(start);
+            let current = new Date(start);
+            while (current <= end) {
+                const year = current.getFullYear();
+                const month = String(current.getMonth() + 1).padStart(2, '0');
+                const day = String(current.getDate()).padStart(2, '0');
+                const dateKey = `${year}-${month}-${day}`;
+                
+                if (dateKey >= startDateStr && dateKey <= endDateStr) {
+                    if (!leavesByDate[dateKey]) {
+                        leavesByDate[dateKey] = new Set();
+                    }
+                    leavesByDate[dateKey].add(l.userId.toString());
+                }
+                current.setDate(current.getDate() + 1);
+            }
+        });
+
+        const attendanceTrend = [];
+        for (let i = 29; i >= 0; i--) {
+            const dStr = getPastDateStr(i);
+            const presentActiveSet = attendancesByDate[dStr] || new Set();
+            const presentActive = Array.from(presentActiveSet).filter(id => activeEmployeeIdsSet.has(id)).length;
+            
+            const leavesActiveSet = leavesByDate[dStr] || new Set();
+            const leavesActive = leavesActiveSet.size;
+            
+            const absentActive = Math.max(0, totalEmployees - (presentActive + leavesActive));
+
+            attendanceTrend.push({
+                date: dStr,
+                present: presentActive,
+                leave: leavesActive,
+                absent: absentActive
+            });
+        }
+
+        res.json({
+            success: true,
+            data: {
+                workforce: {
+                    totalEmployees,
+                    presentToday: presentTodayCount,
+                    onLeave: onLeaveCount,
+                    attendanceNotMarked: attendanceNotMarkedCount,
+                    lateEmployees: lateEmployeesCount,
+                    onLeaveLwp: onLeaveLwpCount,
+                    travelingEmployees: travelingCount,
+                    idleManpower: idleManpowerCount,
+                    siteEngineersOnLeave: siteEngineersOnLeaveCount
+                },
+                siteOperations: {
+                    totalSites,
+                    activeSites: statusBreakdown['Active'] || 0,
+                    completedSites: statusBreakdown['Completed'] || 0,
+                    plannedSites: statusBreakdown['Planned'] || 0,
+                    sitesWithoutEngineers: sitesWithoutEngineersCount,
+                    sitesAtRisk: sitesAtRiskCount,
+                    statusBreakdown
+                },
+                engineerUtilization: {
+                    totalEngineers: totalSiteEngineersCount,
+                    deployedEngineers: deployedSiteEngineersCount,
+                    idleEngineers: idleSiteEngineersCount,
+                    onLeave: siteEngineersOnLeaveCount,
+                    onLwp: siteEngineersOnLwpCount
+                },
+                projectPerformance,
+                managerPerformance,
+                manpowerPlanning,
+                alerts: {
+                    idleEngineers: idleEngineersAlert,
+                    sitesWithoutEngineers: sitesWithoutEngineerAlert,
+                    projectsBehind: projectsBehindTarget,
+                    highLwpCount,
+                    highAbsenteeism: highAbsenteeismPercent
+                },
+                charts: {
+                    attendanceTrend,
+                    workforceDistribution: {
+                        present: presentTodayCount,
+                        leave: onLeaveCount,
+                        absent: totalEmployees - (presentTodayCount + onLeaveCount)
+                    }
+                },
+                engineerLocations,
+                googleMapsApiKey: process.env.GOOGLE_MAPS_API_KEY,
+                details: {
+                    totalEmployees: detailTotalEmployees,
+                    presentToday: detailPresentToday,
+                    onLeave: detailOnLeave,
+                    unmarked: detailUnmarked,
+                    totalSites: detailTotalSites,
+                    lateEmployees: detailLateEmployees,
+                    sitesWithoutEngineers: detailSitesWithoutEngineers,
+                    sitesAtRisk: detailSitesAtRisk,
+                    totalSiteEngineers: detailTotalSiteEngineers,
+                    deployedSiteEngineers: detailDeployedSiteEngineers,
+                    idleSiteEngineers: detailIdleSiteEngineers,
+                    siteEngineersOnLeave: detailSiteEngineersOnLeave
+                }
+            }
+        });
+
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
 router.get('/', (req, res) => res.redirect('/api/v1/dashboard/data'));
 
 module.exports = router;
+

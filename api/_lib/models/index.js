@@ -18,12 +18,12 @@ const CustomerSchema = new mongoose.Schema({
 const SiteSchema = new mongoose.Schema({
     name: String,
     customerId: { type: mongoose.Schema.Types.ObjectId, ref: 'Customer' }
-}, { collection: 'sites' });
+}, { collection: 'sites', strict: false });
 
 // Attendance Model
 const AttendanceSchema = new mongoose.Schema({
     userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-    date: Date,
+    date: String,
     siteId: { type: mongoose.Schema.Types.ObjectId, ref: 'Site' }
 }, { collection: 'attendances' });
 
@@ -33,15 +33,15 @@ const ExpenseSchema = new mongoose.Schema({
     customerId: { type: mongoose.Schema.Types.ObjectId, ref: 'Customer' },
     siteId: { type: mongoose.Schema.Types.ObjectId, ref: 'Site' },
     amount: Number,
-    date: Date,
+    date: String,
     status: String
 }, { collection: 'expenses' });
 
 // Leave Model
 const LeaveSchema = new mongoose.Schema({
     userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-    startDate: Date,
-    endDate: Date,
+    startDate: String,
+    endDate: String,
     status: String,
     type: String,
     amount: Number
