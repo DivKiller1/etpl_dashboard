@@ -47,11 +47,24 @@ const LeaveSchema = new mongoose.Schema({
     amount: Number
 }, { collection: 'leaves', strict: false });
 
+// PaymentManagement Model
+// siteId is stored as STRING (not ObjectId) — use $toString when joining with sites
+const PaymentManagementSchema = new mongoose.Schema({
+    siteId: String,
+    customerId: mongoose.Schema.Types.ObjectId,
+    requestedAmount: Number,
+    requestMode: String,   // "With PO" | "Without PO"
+    status: String,        // "Pending" | "Approved" | "Completed" | "Rejected"
+    isDeleted: Boolean,
+    created: Date
+}, { collection: 'paymentmanagements', strict: false });
+
 module.exports = {
     User: mongoose.model('User', UserSchema),
     Customer: mongoose.model('Customer', CustomerSchema),
     Site: mongoose.model('Site', SiteSchema),
     Attendance: mongoose.model('Attendance', AttendanceSchema),
     Expense: mongoose.model('Expense', ExpenseSchema),
-    Leave: mongoose.model('Leave', LeaveSchema)
+    Leave: mongoose.model('Leave', LeaveSchema),
+    PaymentManagement: mongoose.model('PaymentManagement', PaymentManagementSchema)
 };

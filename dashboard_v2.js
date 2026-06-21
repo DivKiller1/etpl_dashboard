@@ -105,6 +105,15 @@ function getEmployeeLocation(name) {
     return name.charCodeAt(0) % 2 === 0 ? "indore" : "gurgaon";
 }
 
+function normalizeClientExpenseCategory(type) {
+    if (!type) return 'Other';
+    const t = type.trim().toLowerCase();
+    if (t === 'ta' || t.includes('travel') || t.includes('transport')) return 'TA';
+    if (t === 'da' || t.includes('daily allow') || t.includes('dearness')) return 'DA';
+    if (t.includes('hotel') || t.includes('lodge') || t.includes('accommodat')) return 'Hotel';
+    return 'Other';
+}
+
 // Process the raw API response and reconstruct a clean client daily database
 function processRawApiData(data) {
     dailyAttendanceDb = [];
@@ -174,94 +183,27 @@ function processRawApiData(data) {
         });
     }
 
-    // 2. Reconstruct Leave Transactions contiguous grouping
-    const employees = [...new Set(dailyAttendanceDb.map(r => r.employeeName))];
-    employees.forEach(empName => {
-        const empLeaves = dailyAttendanceDb
-            .filter(r => r.employeeName === empName && r.status === 'Leave')
-            .sort((a, b) => new Date(a.date) - new Date(b.date));
-
-        let currentLeaveGroup = [];
-        empLeaves.forEach(record => {
-            if (currentLeaveGroup.length === 0) {
-                currentLeaveGroup.push(record);
-            } else {
-                const prevRecord = currentLeaveGroup[currentLeaveGroup.length - 1];
-                const diffDays = (new Date(record.date) - new Date(prevRecord.date)) / (1000 * 60 * 60 * 24);
-                if (diffDays === 1) {
-                    currentLeaveGroup.push(record);
-                } else {
-                    addLeaveTransaction(empName, currentLeaveGroup);
-                    currentLeaveGroup = [record];
-                }
-            }
-        });
-        if (currentLeaveGroup.length > 0) {
-            addLeaveTransaction(empName, currentLeaveGroup);
-        }
-    });
-
-    // Helper to push processed leave ranges
-    function addLeaveTransaction(name, records) {
-        const start = records[0].date;
-        const end = records[records.length - 1].date;
-        const duration = records.length;
-
-        // Deterministically assign leave type
-        const leaveTypes = ["SL", "LOP", "CL", "EL", "BL"];
-        const hash = (name.charCodeAt(0) + start.charCodeAt(start.length - 1)) % leaveTypes.length;
-        const type = leaveTypes[hash];
-
-        leaveTransactions.push({
-            employeeName: name,
-            startDate: start,
-            endDate: end,
-            duration: duration,
-            type: type
-        });
+    // 2. Real Approved leave records from API
+    if (data.approvedLeaves) {
+        leaveTransactions = data.approvedLeaves;
     }
 
-    // 3. Reconstruct Daily Expenses (distributed daily to support month/date picker reactivity)
-    if (customerExpenses) {
-        customerExpenses.forEach(cust => {
-            const customerName = cust.name;
-            const sites = cust.sites || [];
-            const types = cust.types || [];
-
-            const totalBudget = cust.total;
-            const uniqueDates = [...new Set(dailyAttendanceDb.map(r => r.date))];
-            if (uniqueDates.length === 0) return;
-
-            let remainingBudget = totalBudget;
-            let transactionId = 0;
-
-            while (remainingBudget > 0 && uniqueDates.length > 0) {
-                const dateIndex = (customerName.charCodeAt(0) + transactionId) % uniqueDates.length;
-                const targetDate = uniqueDates[dateIndex];
-
-                const siteIndex = (customerName.charCodeAt(1) + transactionId) % sites.length;
-                const targetSite = sites[siteIndex]?.name || 'Office';
-
-                const typeIndex = (customerName.charCodeAt(2) + transactionId) % types.length;
-                const targetType = types[typeIndex]?.type || 'Other';
-
-                const step = Math.min(remainingBudget, Math.max(100, Math.floor(remainingBudget / 10)));
-                const amount = step === remainingBudget ? step : Math.floor(step * (0.8 + (transactionId % 5) * 0.1));
-
-                dailyExpensesDb.push({
-                    customerName: customerName,
-                    customerId: cust.customerId,
-                    date: targetDate,
-                    site: targetSite,
-                    category: targetType,
-                    amount: amount
-                });
-
-                remainingBudget -= amount;
-                transactionId++;
-            }
-        });
+    // 3. Real Paid expense records from API (normalize category to match chart expectations)
+    if (data.paidExpenses) {
+        dailyExpensesDb = data.paidExpenses.map(e => ({
+            customerName: e.customerName,
+            customerId:   e.customerId,
+            date:         e.date,
+            site:         e.siteName || 'Office',
+            category:     normalizeClientExpenseCategory(e.category),
+            amount:       e.amount || 0
+        }));
     }
+}
+
+// Populates expense/leave charts in Director Dashboard using already-loaded rawApiData
+function fetchCoreDashboardData() {
+    if (rawApiData) updateFilters();
 }
 
 // Core reactive update handler on any filter input change
@@ -494,66 +436,56 @@ function renderAttendanceTrends(attendanceData, scale) {
 
 // Render Chart 2: Leave Distribution Pie/Donut Chart
 function renderLeaveDistribution(leaveData) {
-    const leaveCounts = { SL: 0, LOP: 0, CL: 0, EL: 0, BL: 0 };
+    const el = document.querySelector('#leave-distribution-chart');
+    if (!el) return;
+    const leaveCounts = {};
     leaveData.forEach(l => {
-        if (leaveCounts[l.type] !== undefined) {
-            leaveCounts[l.type] += l.duration;
-        }
+        const t = (l.type || 'Other').trim();
+        leaveCounts[t] = (leaveCounts[t] || 0) + (l.duration || 1);
     });
 
-    const series = Object.values(leaveCounts);
-    const labels = Object.keys(leaveCounts);
+    const rawLabels = Object.keys(leaveCounts);
+    const labels = rawLabels.map(k => {
+        const abbr = { 'Casual Leave':'CL','Earned Leave':'EL','Earned Leaves':'EL','Loss of Pay':'LOP','Sick Leave':'SL','Bereavement Leave':'BL' };
+        return abbr[k] || k;
+    });
+    const series = rawLabels.map(k => leaveCounts[k]);
 
-    const fullNames = {
-        SL: "Sick Leave",
-        LOP: "Loss of Pay",
-        CL: "Casual Leave",
-        EL: "Earned Leaves",
-        BL: "Bereavement Leave"
-    };
+    const colors = ['#ef4444','#f59e0b','#6366f1','#10b981','#3b82f6','#a78bfa','#f43f5e','#06b6d4'];
 
     const options = {
-        series: series,
-        labels: labels,
+        series,
+        labels,
         chart: {
             type: 'donut',
-            height: 350,
+            height: 220,
             events: {
                 dataPointSelection: (e, ctx, config) => {
-                    const selectedIndex = config.dataPointIndex;
-                    const typeLabel = labels[selectedIndex];
-                    openLeaveModal(typeLabel);
+                    openLeaveModal(labels[config.dataPointIndex]);
                 }
             }
         },
-        colors: ['#ef4444', '#f59e0b', '#6366f1', '#10b981', '#3b82f6'],
-        tooltip: {
-            custom: function ({ series, seriesIndex, dataPointIndex, w }) {
-                const abrv = w.config.labels[seriesIndex];
-                const fullName = fullNames[abrv];
-                const val = series[seriesIndex];
-                return `<div style="padding: 10px; font-size: 13px;"><strong>${fullName} (${abrv})</strong>: ${val} Days</div>`;
-            }
-        },
-        legend: {
-            position: 'bottom',
-            formatter: (val) => `${val}`
-        },
-        responsive: [{
-            breakpoint: 480,
-            options: { legend: { position: 'bottom' } }
-        }]
+        colors: colors.slice(0, labels.length),
+        tooltip: { y: { formatter: (val) => `${val} Days` } },
+        legend: { position: 'right', fontSize: '11px', offsetY: 0 },
+        plotOptions: { pie: { donut: { size: '55%' } } },
+        dataLabels: {
+            enabled: true,
+            formatter: (val) => val.toFixed(1) + '%',
+            style: { fontSize: '11px', fontWeight: '600', colors: ['#fff'] },
+            dropShadow: { enabled: false }
+        }
     };
 
     if (chartLeaveDistribution) chartLeaveDistribution.destroy();
 
-    if (series.every(v => v === 0)) {
-        document.querySelector("#leave-distribution-chart").innerHTML = '<div style="padding: 100px; text-align: center; color: #888;">No leave distribution records</div>';
+    if (series.length === 0 || series.every(v => v === 0)) {
+        el.innerHTML = '<div style="padding:60px; text-align:center; color:#888;">No leave records</div>';
         return;
     }
 
-    document.querySelector("#leave-distribution-chart").innerHTML = '';
-    chartLeaveDistribution = new ApexCharts(document.querySelector("#leave-distribution-chart"), options);
+    el.innerHTML = '';
+    chartLeaveDistribution = new ApexCharts(el, options);
     chartLeaveDistribution.render();
 }
 
@@ -573,22 +505,19 @@ function renderCustomerExpenses(expenseData) {
         };
     });
 
-    const chartWidth = Math.max(800, customers.length * 80);
-
     const options = {
         series: seriesData,
         chart: {
             type: 'bar',
-            height: 350,
-            width: chartWidth,
+            height: 200,
             stacked: true,
             toolbar: { show: false }
         },
         plotOptions: {
             bar: {
                 horizontal: false,
-                columnWidth: '55%',
-                borderRadius: 4
+                columnWidth: '35%',
+                borderRadius: 3
             }
         },
         xaxis: {
@@ -608,15 +537,17 @@ function renderCustomerExpenses(expenseData) {
         legend: { position: 'top', horizontalAlign: 'left' }
     };
 
+    const expEl = document.querySelector('#customer-expenses-chart');
+    if (!expEl) return;
     if (chartCustomerExpenses) chartCustomerExpenses.destroy();
 
     if (customers.length === 0) {
-        document.querySelector("#customer-expenses-chart").innerHTML = '<div style="padding: 100px; text-align: center; color: #888;">No expense data found in the selected range</div>';
+        expEl.innerHTML = '<div style="padding:60px; text-align:center; color:#888;">No expense data in selected range</div>';
         return;
     }
 
-    document.querySelector("#customer-expenses-chart").innerHTML = '';
-    chartCustomerExpenses = new ApexCharts(document.querySelector("#customer-expenses-chart"), options);
+    expEl.innerHTML = '';
+    chartCustomerExpenses = new ApexCharts(expEl, options);
     chartCustomerExpenses.render();
 }
 
@@ -666,19 +597,28 @@ function renderCustomerBreakdowns(expenseData) {
     const siteOptions = {
         series: siteSeries,
         labels: siteLabels,
-        chart: { type: 'pie', height: 280 },
-        legend: { position: 'bottom' },
+        chart: { type: 'pie', height: 200 },
+        legend: { position: 'right', fontSize: '11px' },
+        dataLabels: {
+            enabled: true,
+            formatter: (val) => val.toFixed(1) + '%',
+            style: { fontSize: '11px', fontWeight: '600', colors: ['#fff'] },
+            dropShadow: { enabled: false }
+        },
         tooltip: { y: { formatter: (val) => '₹' + val.toLocaleString('en-IN') } },
         colors: ['#6366f1', '#10b981', '#f59e0b', '#3b82f6', '#ef4444', '#8b5cf6']
     };
 
+    const siteEl = document.querySelector('#customer-site-chart');
     if (chartCustomerSite) chartCustomerSite.destroy();
-    if (siteSeries.length > 0) {
-        document.querySelector("#customer-site-chart").innerHTML = '';
-        chartCustomerSite = new ApexCharts(document.querySelector("#customer-site-chart"), siteOptions);
-        chartCustomerSite.render();
-    } else {
-        document.querySelector("#customer-site-chart").innerHTML = '<div style="padding: 80px; text-align: center; color: #888;">No site data available</div>';
+    if (siteEl) {
+        if (siteSeries.length > 0) {
+            siteEl.innerHTML = '';
+            chartCustomerSite = new ApexCharts(siteEl, siteOptions);
+            chartCustomerSite.render();
+        } else {
+            siteEl.innerHTML = '<div style="padding:60px; text-align:center; color:#888;">No site data available</div>';
+        }
     }
 
     // 2. Expense Category Types Breakdown Pie Chart
@@ -693,19 +633,28 @@ function renderCustomerBreakdowns(expenseData) {
     const typeOptions = {
         series: typeSeries,
         labels: typeLabels,
-        chart: { type: 'pie', height: 280 },
-        legend: { position: 'bottom' },
+        chart: { type: 'pie', height: 200 },
+        legend: { position: 'right', fontSize: '11px' },
+        dataLabels: {
+            enabled: true,
+            formatter: (val) => val.toFixed(1) + '%',
+            style: { fontSize: '11px', fontWeight: '600', colors: ['#fff'] },
+            dropShadow: { enabled: false }
+        },
         tooltip: { y: { formatter: (val) => '₹' + val.toLocaleString('en-IN') } },
         colors: ['#6366f1', '#10b981', '#f59e0b', '#3b82f6']
     };
 
+    const typeEl = document.querySelector('#expense-types-chart');
     if (chartExpenseTypes) chartExpenseTypes.destroy();
-    if (typeSeries.some(v => v > 0)) {
-        document.querySelector("#expense-types-chart").innerHTML = '';
-        chartExpenseTypes = new ApexCharts(document.querySelector("#expense-types-chart"), typeOptions);
-        chartExpenseTypes.render();
-    } else {
-        document.querySelector("#expense-types-chart").innerHTML = '<div style="padding: 80px; text-align: center; color: #888;">No category data available</div>';
+    if (typeEl) {
+        if (typeSeries.some(v => v > 0)) {
+            typeEl.innerHTML = '';
+            chartExpenseTypes = new ApexCharts(typeEl, typeOptions);
+            chartExpenseTypes.render();
+        } else {
+            typeEl.innerHTML = '<div style="padding:60px; text-align:center; color:#888;">No category data available</div>';
+        }
     }
 }
 
@@ -713,8 +662,10 @@ function renderCustomerBreakdowns(expenseData) {
 function renderEmptyCustomerBreakdownCharts() {
     if (chartCustomerSite) chartCustomerSite.destroy();
     if (chartExpenseTypes) chartExpenseTypes.destroy();
-    document.querySelector("#customer-site-chart").innerHTML = '<div style="padding: 80px; text-align: center; color: #888;">No data available</div>';
-    document.querySelector("#expense-types-chart").innerHTML = '<div style="padding: 80px; text-align: center; color: #888;">No data available</div>';
+    const s = document.querySelector('#customer-site-chart');
+    const t = document.querySelector('#expense-types-chart');
+    if (s) s.innerHTML = '<div style="padding:60px; text-align:center; color:#888;">No data available</div>';
+    if (t) t.innerHTML = '<div style="padding:60px; text-align:center; color:#888;">No data available</div>';
 }
 
 // Filter core workforce list based on the global filterState
@@ -956,7 +907,13 @@ function renderWorkforceDistributionDetails(selectedDate) {
         tooltip: {
             y: { formatter: (val) => val + ' Employees present' }
         },
-        legend: { position: 'bottom' }
+        legend: { position: 'bottom' },
+        dataLabels: {
+            enabled: true,
+            formatter: (val) => val.toFixed(1) + '%',
+            style: { fontSize: '11px', fontWeight: '600', colors: ['#fff'] },
+            dropShadow: { enabled: false }
+        }
     };
 
     if (chartWorkforceShare) chartWorkforceShare.destroy();
@@ -1666,15 +1623,7 @@ function openLeaveModal(leaveType) {
 
     if (!modal || !tbody) return;
 
-    const fullNames = {
-        SL: "Sick Leave",
-        LOP: "Loss of Pay",
-        CL: "Casual Leave",
-        EL: "Earned Leaves",
-        BL: "Bereavement Leave"
-    };
-
-    title.textContent = `${fullNames[leaveType] || 'Leave'} Details (${leaveType})`;
+    title.textContent = `${abbrevLeaveType(leaveType)} Leave Details`;
     tbody.innerHTML = '';
 
     const records = filterLeavesDb().filter(l => l.type === leaveType);
@@ -1734,9 +1683,26 @@ async function init() {
         rawApiData = result.data;
         processRawApiData(rawApiData);
 
-        // Remove the loading screen and display main structure layout
+        // Remove the loading screen; pick default view based on role
         document.getElementById('dashboard-loading-spinner')?.classList.add('hidden');
-        document.getElementById('dashboard-main-content')?.classList.remove('hidden');
+        document.querySelector('.filters-container')?.classList.add('hidden');
+
+        const userRole = window.__etplUser?.role || 'admin';
+        if (userRole === 'hr') {
+            // HR lands on HR Analytics
+            document.getElementById('hr-dashboard-view')?.classList.remove('hidden');
+            document.getElementById('nav-hr-dashboard')?.classList.add('active');
+            const breadcrumb = document.getElementById('breadcrumb');
+            if (breadcrumb) breadcrumb.textContent = 'HR ANALYTICS';
+            fetchHrData();
+        } else {
+            // Admin lands on Director's Dashboard
+            document.getElementById('director-dashboard-view')?.classList.remove('hidden');
+            document.getElementById('nav-director-dashboard')?.classList.add('active');
+            fetchDirectorData();
+            loadGoogleMapsScript();
+        }
+        fetchCoreDashboardData();
 
         // Initial rendering call
         updateFilters();
@@ -1762,8 +1728,40 @@ async function init() {
     }
 }
 
+// ── Auth / Role bootstrap ────────────────────────────────────────────────────
+function applyRoleBasedAccess() {
+    const user = window.__etplUser;
+    if (!user) return;
+
+    // Populate topbar user info
+    const nameEl   = document.getElementById('topbar-username');
+    const roleEl   = document.getElementById('topbar-role');
+    const avatarEl = document.getElementById('topbar-avatar');
+    if (nameEl)   nameEl.textContent   = user.username;
+    if (roleEl)   roleEl.textContent   = user.role === 'admin' ? 'Administrator' : 'HR';
+    if (avatarEl) avatarEl.textContent = user.username.slice(0, 2).toUpperCase();
+
+    // HR role: only HR Analytics visible
+    if (user.role === 'hr') {
+        ['nav-director-dashboard', 'nav-siteng-dashboard'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.style.display = 'none';
+        });
+    }
+
+    // Logout button
+    document.getElementById('logout-btn')?.addEventListener('click', () => {
+        localStorage.removeItem('etpl_token');
+        localStorage.removeItem('etpl_user');
+        window.location.replace('/login.html');
+    });
+}
+
 // Bind all listeners and call initial startup
 document.addEventListener('DOMContentLoaded', () => {
+    // Apply role-based access before anything else renders
+    applyRoleBasedAccess();
+
     // 1. Setup Filters event listeners
     document.getElementById('month-select')?.addEventListener('change', (e) => {
         // Clear custom date values on month select changes to keep state consistent
@@ -1834,33 +1832,60 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // 6. Director Dashboard View toggles
-    document.getElementById('nav-dashboard')?.addEventListener('click', (e) => {
-        e.preventDefault();
-        document.getElementById('nav-dashboard').classList.add('active');
-        document.getElementById('nav-director-dashboard')?.classList.remove('active');
-        document.getElementById('dashboard-main-content').classList.remove('hidden');
-        document.getElementById('director-dashboard-view')?.classList.add('hidden');
-        const breadcrumb = document.getElementById('breadcrumb');
-        if (breadcrumb) breadcrumb.textContent = 'OPERATIONAL ANALYTICS';
-        document.querySelector('.filters-container')?.classList.remove('hidden');
+    // Sidebar collapse toggle
+    document.getElementById('sidebar-toggle-btn')?.addEventListener('click', () => {
+        const sidebar = document.getElementById('sidebar');
+        const icon    = document.getElementById('sidebar-toggle-icon');
+        const collapsed = sidebar.classList.toggle('collapsed');
+        if (icon) icon.setAttribute('data-lucide', collapsed ? 'chevrons-right' : 'chevrons-left');
+        if (window.lucide) lucide.createIcons();
+        // resize Google Map if open
+        if (window.googleMapInstance) google.maps.event.trigger(googleMapInstance, 'resize');
     });
 
+    // Analytics Dashboards nav group collapse/expand
+    const navGroupBtn   = document.getElementById('nav-group-analytics-btn');
+    const navGroupItems = document.getElementById('nav-group-analytics-items');
+    const navGroupChev  = document.getElementById('nav-group-analytics-chevron');
+    if (navGroupBtn && navGroupItems) {
+        // Set initial max-height so transition works
+        navGroupItems.style.maxHeight = navGroupItems.scrollHeight + 'px';
+        navGroupBtn.addEventListener('click', () => {
+            const isCollapsed = navGroupItems.classList.toggle('collapsed');
+            navGroupItems.style.maxHeight = isCollapsed ? '0px' : navGroupItems.scrollHeight + 'px';
+            navGroupBtn.setAttribute('aria-expanded', String(!isCollapsed));
+            if (navGroupChev) navGroupChev.style.transform = isCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)';
+        });
+    }
+
+    // 6. Director Dashboard View toggles
     document.getElementById('nav-director-dashboard')?.addEventListener('click', (e) => {
         e.preventDefault();
+        hideAllDashboardViews();
+        document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
         document.getElementById('nav-director-dashboard').classList.add('active');
-        document.getElementById('nav-dashboard').classList.remove('active');
         document.getElementById('director-dashboard-view')?.classList.remove('hidden');
-        document.getElementById('dashboard-main-content').classList.add('hidden');
         const breadcrumb = document.getElementById('breadcrumb');
-        if (breadcrumb) breadcrumb.textContent = 'DIRECTOR ANALYTICS';
+        if (breadcrumb) breadcrumb.textContent = "DIRECTOR'S DASHBOARD";
         document.querySelector('.filters-container')?.classList.add('hidden');
         fetchDirectorData();
-        // Load Google Maps API script asynchronously
+        fetchCoreDashboardData();
         loadGoogleMapsScript();
     });
 
     document.getElementById('director-date-picker')?.addEventListener('change', () => {
+        fetchDirectorData();
+    });
+
+    document.getElementById('director-refresh-btn')?.addEventListener('click', () => {
+        fetchDirectorData();
+    });
+
+    document.getElementById('director-state-filter')?.addEventListener('change', () => {
+        fetchDirectorData();
+    });
+
+    document.getElementById('director-customer-filter')?.addEventListener('change', () => {
         fetchDirectorData();
     });
 
@@ -1876,7 +1901,6 @@ document.addEventListener('DOMContentLoaded', () => {
         'card-dir-total-sites': { type: 'totalSites', title: 'Total Sites' },
         'card-dir-late-employees': { type: 'lateEmployees', title: 'Late Arrivals' },
         'card-dir-sites-no-engineer': { type: 'sitesWithoutEngineers', title: 'Sites Without Engineer (30d)' },
-        'card-dir-sites-at-risk': { type: 'sitesAtRisk', title: 'Sites At Risk (7d gap)' },
         'card-dir-total-engineers': { type: 'totalSiteEngineers', title: 'Total Site Engineers' },
         'card-dir-deployed-engineers': { type: 'deployedSiteEngineers', title: 'Deployed Site Engineers' },
         'card-dir-idle-engineers': { type: 'idleSiteEngineers', title: 'Idle Site Engineers' },
@@ -1893,19 +1917,502 @@ document.addEventListener('DOMContentLoaded', () => {
     // Close Director Modal events
     document.getElementById('director-modal-close')?.addEventListener('click', closeDirectorModal);
     document.getElementById('director-modal')?.addEventListener('click', (e) => {
-        if (e.target === document.getElementById('director-modal')) {
-            closeDirectorModal();
-        }
+        if (e.target === document.getElementById('director-modal')) closeDirectorModal();
+    });
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') closeDirectorModal();
     });
 
     // 8. Initialize layout data loading
     init();
 });
 
+// ════════════════════════════════════════════════════════════════════════════
+// SECTION 8: SITE ENGINEER DASHBOARD
+// ════════════════════════════════════════════════════════════════════════════
+
+// Chart instances (destroyed + recreated on each fetch)
+let seChartStatus       = null;
+let seChartTrend        = null;
+let seChartProjectProg  = null;
+
+// Pagination state for idle-detailed modal
+let seIdlePage  = 1;
+let seIdleLimit = 10;
+let seIdleTotal = 0;
+let seIdleCache = []; // full list cached from last successful fetch
+
+/** Resolve API base (mirrors pattern used in init / fetchDirectorData) */
+function siteEngApiBase() {
+    return (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+        ? 'http://127.0.0.1:5000/api/v1'
+        : '/api/v1';
+}
+
+/** Build query-string params shared across all siteng endpoints */
+function siteEngParams() {
+    const dateEl  = document.getElementById('siteng-date-picker');
+    const monthEl = document.getElementById('siteng-month-select');
+    const date    = (dateEl && dateEl.value)  ? dateEl.value  : new Date().toISOString().split('T')[0];
+    const month   = (monthEl && monthEl.value) ? monthEl.value : date.substring(0, 7);
+    return `date=${date}&month=${month}`;
+}
+
+/** Show/hide the site engineer view */
+function showSiteEngView() {
+    hideAllDashboardViews();
+    document.getElementById('siteng-dashboard-view')?.classList.remove('hidden');
+    document.getElementById('breadcrumb').textContent = 'MANPOWER ANALYTICS';
+    document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+    document.getElementById('nav-siteng-dashboard')?.classList.add('active');
+    document.querySelector('.filters-container')?.classList.add('hidden');
+    fetchSiteEngData();
+}
+
+// ── Fetch: all 10 parallel endpoints ────────────────────────────────────────
+async function fetchSiteEngData() {
+    const base   = siteEngApiBase();
+    const params = siteEngParams();
+    const endpoints = [
+        'kpi-summary', 'project-wise-progress', 'pm-performance',
+        'sites-manpower-summary', 'engineer-status-today', 'manpower-trend',
+        'project-health', 'alerts', 'monthly-lwp-idle-summary', 'idle-engineers'
+    ];
+
+    let results = {};
+    try {
+        const responses = await Promise.all(
+            endpoints.map(ep => fetch(`${base}/siteng/${ep}?${params}`))
+        );
+        const jsons = await Promise.all(responses.map(r => r.json()));
+        endpoints.forEach((ep, i) => { results[ep] = jsons[i].data || null; });
+    } catch (err) {
+        console.error('[siteng] fetchSiteEngData error:', err.message);
+        return;
+    }
+
+    renderSiteEngKPIs(results['kpi-summary']);
+    renderSiteEngAlerts(results['alerts']);
+    renderSiteEngStatusChart(results['engineer-status-today']);
+    renderSiteEngTrendChart(results['manpower-trend']);
+    renderSiteEngProjectProgress(results['project-wise-progress']);
+    renderSiteEngProjectHealth(results['project-health']);
+    renderSiteEngPMPerf(results['pm-performance']);
+    renderSiteEngManpowerSummary(results['sites-manpower-summary']);
+    renderSiteEngMonthlySummary(results['monthly-lwp-idle-summary']);
+    renderSiteEngIdleTop5(results['idle-engineers']);
+
+    // Pre-load idle-detailed cache for export
+    fetchSiteEngIdleDetailed(1, true);
+}
+
+// ── Fetch: paginated idle-detailed ──────────────────────────────────────────
+async function fetchSiteEngIdleDetailed(page, cacheOnly) {
+    const base   = siteEngApiBase();
+    const params = siteEngParams();
+    try {
+        const r    = await fetch(`${base}/siteng/idle-engineers-detailed?${params}&page=${page}&limit=${seIdleLimit}`);
+        const json = await r.json();
+        if (!json.data) return;
+        seIdlePage  = json.pagination?.page  || page;
+        seIdleLimit = json.pagination?.limit || seIdleLimit;
+        seIdleTotal = json.pagination?.total || 0;
+        seIdleCache = json.data;
+        if (!cacheOnly) renderSiteEngIdleModal(json.data);
+    } catch (err) {
+        console.error('[siteng] fetchSiteEngIdleDetailed error:', err.message);
+    }
+}
+
+// ── Render: KPI Cards ────────────────────────────────────────────────────────
+function renderSiteEngKPIs(d) {
+    if (!d) return;
+    sitengKpiCache = d;
+    const set = (id, val) => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = val ?? '-';
+    };
+    set('siteng-kpi-target-sites',    d.targetSites);
+    set('siteng-kpi-done-sites',      d.doneSites);
+    set('siteng-kpi-visibility-sites',d.visibilitySites);
+    set('siteng-kpi-achieved-pct',    d.achievedPercent != null ? `${d.achievedPercent}%` : '-');
+    set('siteng-kpi-total-ff',        d.totalFieldForce);
+    set('siteng-kpi-deployed',        d.deployedManpower);
+    set('siteng-kpi-ratio-diff',      d.ratioDiff != null
+        ? `${d.ratioDiff > 0 ? '+' : ''}${d.ratioDiff}%` : '-');
+}
+
+// ── Render: Alerts Banner ────────────────────────────────────────────────────
+function renderSiteEngAlerts(d) {
+    const container = document.getElementById('siteng-alerts-container');
+    if (!container) return;
+    if (!d) { container.innerHTML = '<p style="color:var(--text-muted)">Could not load alerts.</p>'; return; }
+    const items = [
+        { label: 'Engineers Idle &gt;5 Days', value: d.idleOver5Count,          icon: 'zap-off',      danger: true },
+        { label: 'Sites Without Engineers',    value: d.sitesWithoutEngineers,   icon: 'map-pin-off',  danger: true },
+        { label: 'LWP Today',                 value: d.highLwpCount,            icon: 'minus-circle', danger: false },
+        { label: 'Projects Behind (&lt;80%)',  value: d.projectsBehind,          icon: 'trending-down',danger: true },
+        { label: 'Manpower Shortage',          value: d.manpowerShortage,        icon: 'alert-circle', danger: d.manpowerShortage > 0 }
+    ];
+    container.innerHTML = items.map(item => {
+        const cls = (item.danger && item.value > 0) ? 'danger' : 'warning';
+        return `
+        <div class="alert-card ${cls}">
+            <i data-lucide="${item.icon}"></i>
+            <div class="alert-content">
+                <span class="alert-title" style="font-size:22px; font-weight:800; line-height:1;">${item.value ?? 0}</span>
+                <span class="alert-desc" style="margin-top:4px;">${item.label}</span>
+            </div>
+        </div>`;
+    }).join('');
+    if (window.lucide) lucide.createIcons();
+}
+
+// ── Render: Engineer Status Table ────────────────────────────────────────────
+function renderSiteEngStatusChart(d) {
+    const tbody = document.getElementById('siteng-status-table-tbody');
+    if (!tbody) return;
+    if (!d) { tbody.innerHTML = '<tr><td colspan="2" style="text-align:center;color:var(--text-muted);padding:24px;">No data</td></tr>'; return; }
+    sitengStatusCache = d;
+
+    const rows = [
+        { icon: 'map-pin',      label: 'On Site',    val: d.onSite   ?? 0, color: '#10b981' },
+        { icon: 'car',          label: 'Travelling',  val: d.traveling?? 0, color: '#3b82f6' },
+        { icon: 'building-2',   label: 'At Office',   val: d.atOffice ?? 0, color: '#6366f1' },
+        { icon: 'calendar-off', label: 'On Leave',    val: d.onLeave  ?? 0, color: '#f59e0b' },
+        { icon: 'minus-circle', label: 'On LWP',      val: d.onLWP    ?? 0, color: '#a78bfa' },
+        { icon: 'zap-off',      label: 'Idle',        val: d.idle     ?? 0, color: '#ef4444' }
+    ];
+    const total = rows.reduce((s, r) => s + r.val, 0) || 1;
+    tbody.innerHTML = rows.map(r => {
+        const pct = ((r.val / total) * 100).toFixed(0);
+        return `<tr>
+            <td style="display:flex;align-items:center;gap:8px;padding:7px 10px;">
+                <span style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:6px;background:#f1f5f9;flex-shrink:0;">
+                    <i data-lucide="${r.icon}" style="width:13px;height:13px;color:${r.color};"></i>
+                </span>
+                <span style="font-size:13px;font-weight:600;color:#334155;">${r.label}</span>
+            </td>
+            <td class="status-count-cell" style="padding:7px 10px;">
+                <span style="color:${r.color};font-size:17px;font-weight:700;">${r.val}</span>
+                <span style="font-size:11px;color:var(--text-muted);margin-left:4px;">${pct}%</span>
+            </td>
+        </tr>`;
+    }).join('');
+    if (window.lucide) lucide.createIcons();
+
+    // Also populate the 6-card activity status KPIs
+    const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val ?? 0; };
+    set('siteng-act-onsite',    d.onSite    ?? 0);
+    set('siteng-act-travelling', d.traveling ?? 0);
+    set('siteng-act-atoffice',  d.atOffice  ?? 0);
+    set('siteng-act-onleave',   d.onLeave   ?? 0);
+    set('siteng-act-lwp',       d.onLWP     ?? 0);
+    set('siteng-act-idle',      d.idle      ?? 0);
+}
+
+// ── Render: 30-day Manpower Trend ────────────────────────────────────────────
+function renderSiteEngTrendChart(d) {
+    const el = document.getElementById('siteng-manpower-trend-chart');
+    if (!el || !d || !d.length) return;
+    if (seChartTrend) { seChartTrend.destroy(); seChartTrend = null; }
+
+    const categories = d.map(r => r.date);
+    seChartTrend = new ApexCharts(el, {
+        chart:    { type: 'line', height: 240, toolbar: { show: false }, zoom: { enabled: false } },
+        series: [
+            { name: 'On Site',    data: d.map(r => r.onSite)   },
+            { name: 'At Office',  data: d.map(r => r.atOffice)  },
+            { name: 'Idle',       data: d.map(r => r.idle)      },
+            { name: 'Traveling',  data: d.map(r => r.traveling) }
+        ],
+        colors:   ['#10b981','#3b82f6','#ef4444','#f59e0b'],
+        xaxis:    { categories, tickAmount: 6, labels: { rotate: -30, style: { fontSize: '10px' } } },
+        yaxis:    { title: { text: 'Headcount' } },
+        stroke:   { curve: 'smooth', width: 2 },
+        legend:   { position: 'top' },
+        grid:     { borderColor: '#e5e7eb' },
+        dataLabels: { enabled: false },
+        tooltip:  { shared: true, intersect: false }
+    });
+    seChartTrend.render();
+}
+
+// ── Render: Project-wise Progress Bar Chart ──────────────────────────────────
+function renderSiteEngProjectProgress(d) {
+    const el = document.getElementById('siteng-project-progress-chart');
+    if (!el || !d || !d.length) return;
+    if (seChartProjectProg) { seChartProjectProg.destroy(); seChartProjectProg = null; }
+
+    seChartProjectProg = new ApexCharts(el, {
+        chart:  { type: 'bar', height: 240, toolbar: { show: false } },
+        series: [
+            { name: 'Target', data: d.map(r => r.target) },
+            { name: 'Done',   data: d.map(r => r.done)   }
+        ],
+        colors:  ['#c7d2fe','#6366f1'],
+        xaxis:   { categories: d.map(r => r.name), labels: { style: { fontSize: '11px' } } },
+        yaxis:   { title: { text: 'Sites' } },
+        plotOptions: { bar: { horizontal: false, columnWidth: '50%', borderRadius: 4 } },
+        dataLabels: { enabled: false },
+        legend:  { position: 'top' },
+        grid:    { borderColor: '#e5e7eb' },
+        tooltip: { y: { formatter: (val) => `${val} sites` } }
+    });
+    seChartProjectProg.render();
+}
+
+// ── Render: Project Health Table ─────────────────────────────────────────────
+function renderSiteEngProjectHealth(d) {
+    const tbody = document.getElementById('siteng-project-health-tbody');
+    if (!tbody) return;
+    if (!d || !d.length) { tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text-muted)">No data</td></tr>'; return; }
+    tbody.innerHTML = d.map(r => {
+        const pct     = r.target > 0 ? ((r.done / r.target) * 100).toFixed(1) : '0.0';
+        const badge   = r.status === 'On Track'
+            ? '<span class="status-badge status-active">On Track</span>'
+            : '<span class="status-badge status-danger">Behind</span>';
+        return `<tr>
+            <td>${escapeHtml(r.name)}</td>
+            <td style="text-align:center;">${r.target}</td>
+            <td style="text-align:center;">${r.done}</td>
+            <td style="text-align:center;">${r.pending}</td>
+            <td style="text-align:center;">${badge}</td>
+        </tr>`;
+    }).join('');
+}
+
+// ── Render: PM Performance Table ─────────────────────────────────────────────
+function renderSiteEngPMPerf(d) {
+    const tbody = document.getElementById('siteng-pm-perf-tbody');
+    if (!tbody) return;
+    if (!d || !d.length) { tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--text-muted)">No data</td></tr>'; return; }
+    tbody.innerHTML = d.map(r => `<tr>
+        <td>${escapeHtml(r.name)}</td>
+        <td style="text-align:center;">${r.assignedCount}</td>
+        <td style="text-align:center;">${r.completedCount}</td>
+        <td style="text-align:center;">${r.utilizationPercent}%</td>
+    </tr>`).join('');
+}
+
+// ── Render: Sites & Manpower Summary Mini-Grid ───────────────────────────────
+function renderSiteEngManpowerSummary(d) {
+    const grid = document.getElementById('siteng-manpower-summary-grid');
+    if (!grid || !d) return;
+    const items = [
+        { label: 'Total Sites',            value: d.totalSites            },
+        { label: 'Assigned Sites',         value: d.assignedSites         },
+        { label: 'Active Sites',           value: d.activeSites           },
+        { label: 'Upcoming Sites',         value: d.upcomingSites         },
+        { label: 'Sites Without Engineers',value: d.sitesWithoutEngineers },
+        { label: 'Total Manpower',         value: d.totalManpower         },
+        { label: 'Active Manpower',        value: d.activeManpower        },
+        { label: 'Idle Manpower',          value: d.idleManpower          },
+        { label: 'Understaffed Sites',     value: d.understaffedSites     },
+        { label: 'Overstaffed Sites',      value: d.overstaffedSites      }
+    ];
+    grid.innerHTML = items.map(item => `
+        <div class="kpi-card glassmorphic" style="padding: 12px 16px;">
+            <div class="kpi-data">
+                <span class="kpi-value" style="font-size: 1.4rem;">${item.value ?? 0}</span>
+                <span class="kpi-label">${item.label}</span>
+            </div>
+        </div>`).join('');
+}
+
+// ── Render: Monthly LWP / Idle Summary ──────────────────────────────────────
+function renderSiteEngMonthlySummary(d) {
+    if (!d) return;
+    const set = (id, val) => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = val ?? 0;
+    };
+    set('siteng-kpi-lwp-count',   d.lwpCount);
+    set('siteng-kpi-lwp-days',    d.lwpCount);
+    set('siteng-kpi-idle-days',   d.idleCount);
+    set('siteng-kpi-ev-count',    d.evCount);
+    set('siteng-kpi-left-count',  d.leftCount);
+}
+
+// ── Render: Idle Engineers Top-5 ─────────────────────────────────────────────
+function renderSiteEngIdleTop5(d) {
+    const tbody = document.getElementById('siteng-idle-top5-tbody');
+    if (!tbody) return;
+    if (!d || !d.length) {
+        tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--text-muted)">No idle engineers</td></tr>';
+        return;
+    }
+    tbody.innerHTML = d.map(r => `<tr>
+        <td>${escapeHtml(r.fullName)}</td>
+        <td>${escapeHtml(r.lastProject)}</td>
+        <td>${escapeHtml(r.lastLocation)}</td>
+        <td style="text-align:center;">${r.idleDays}</td>
+    </tr>`).join('');
+}
+
+// ── Render: Idle Modal Rows ───────────────────────────────────────────────────
+function renderSiteEngIdleModal(rows) {
+    const tbody    = document.getElementById('siteng-idle-modal-tbody');
+    const pageInfo = document.getElementById('siteng-idle-modal-page-info');
+    const prevBtn  = document.getElementById('siteng-idle-modal-prev');
+    const nextBtn  = document.getElementById('siteng-idle-modal-next');
+    if (!tbody) return;
+
+    if (!rows || !rows.length) {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-muted)">No idle engineers found</td></tr>';
+        if (pageInfo) pageInfo.textContent = 'Page 1 of 1';
+        if (prevBtn) prevBtn.disabled = true;
+        if (nextBtn) nextBtn.disabled = true;
+        return;
+    }
+
+    tbody.innerHTML = rows.map(r => `<tr>
+        <td>${escapeHtml(r.employeeId)}</td>
+        <td>${escapeHtml(r.fullName)}</td>
+        <td>${escapeHtml(r.designation)}</td>
+        <td>${escapeHtml(r.managerName)}</td>
+        <td>${escapeHtml(r.lastProject)}</td>
+        <td>${escapeHtml(r.lastLocation)}</td>
+        <td style="text-align:center;">${r.idleDays}</td>
+    </tr>`).join('');
+
+    const totalPages = Math.max(1, Math.ceil(seIdleTotal / seIdleLimit));
+    if (pageInfo) pageInfo.textContent = `Page ${seIdlePage} of ${totalPages}`;
+    if (prevBtn) prevBtn.disabled = seIdlePage <= 1;
+    if (nextBtn) nextBtn.disabled = seIdlePage >= totalPages;
+}
+
+// ── Export: Idle Engineers Excel ─────────────────────────────────────────────
+async function exportSiteEngIdleExcel() {
+    // Fetch all pages by requesting a high limit
+    const base   = siteEngApiBase();
+    const params = siteEngParams();
+    let rows = [];
+    try {
+        const r    = await fetch(`${base}/siteng/idle-engineers-detailed?${params}&page=1&limit=1000`);
+        const json = await r.json();
+        rows = json.data || [];
+    } catch (err) {
+        console.error('[siteng] export idle error:', err.message);
+        return;
+    }
+    if (!rows.length) { alert('No idle engineers to export.'); return; }
+
+    const workbook  = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Idle Engineers');
+    worksheet.columns = [
+        { header: 'Employee ID',   key: 'employeeId',   width: 14 },
+        { header: 'Full Name',     key: 'fullName',      width: 24 },
+        { header: 'Designation',   key: 'designation',   width: 20 },
+        { header: 'Manager',       key: 'managerName',   width: 24 },
+        { header: 'Last Project',  key: 'lastProject',   width: 24 },
+        { header: 'Last Location', key: 'lastLocation',  width: 24 },
+        { header: 'Idle Days',     key: 'idleDays',      width: 10 },
+        { header: 'Reason',        key: 'reason',        width: 28 }
+    ];
+    rows.forEach(r => worksheet.addRow(r));
+    const hRow = worksheet.getRow(1);
+    hRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    hRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF6366F1' } };
+    hRow.alignment = { horizontal: 'left', vertical: 'middle' };
+
+    const buf = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href = url;
+    a.download = `Idle_Engineers_Report_${new Date().toISOString().split('T')[0]}.xlsx`;
+    a.click();
+    URL.revokeObjectURL(url);
+}
+
+/** Minimal HTML escape used in table rows */
+function escapeHtml(str) {
+    if (str == null) return '';
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+
+// ── Site Engineer Event Listeners (separate DOMContentLoaded block) ──────────
+document.addEventListener('DOMContentLoaded', () => {
+    // Nav item – show siteng view
+    document.getElementById('nav-siteng-dashboard')?.addEventListener('click', (e) => {
+        e.preventDefault();
+        showSiteEngView();
+    });
+
+    // hideAllDashboardViews() in each nav handler already covers siteng hiding.
+
+    // Refresh button
+    document.getElementById('siteng-refresh-btn')?.addEventListener('click', fetchSiteEngData);
+
+    // Date / month filters auto-refresh
+    document.getElementById('siteng-date-picker')?.addEventListener('change', () => {
+        if (document.getElementById('siteng-dashboard-view')?.classList.contains('hidden') === false) {
+            fetchSiteEngData();
+        }
+    });
+    document.getElementById('siteng-month-select')?.addEventListener('change', () => {
+        if (document.getElementById('siteng-dashboard-view')?.classList.contains('hidden') === false) {
+            fetchSiteEngData();
+        }
+    });
+
+    // "View All" button – open modal
+    document.getElementById('siteng-view-all-idle-btn')?.addEventListener('click', async () => {
+        seIdlePage = 1;
+        await fetchSiteEngIdleDetailed(seIdlePage, false);
+        document.getElementById('siteng-idle-modal')?.classList.add('active');
+    });
+
+    // Modal close
+    document.getElementById('siteng-idle-modal-close')?.addEventListener('click', () => {
+        document.getElementById('siteng-idle-modal')?.classList.remove('active');
+    });
+    document.getElementById('siteng-idle-modal')?.addEventListener('click', (e) => {
+        if (e.target === document.getElementById('siteng-idle-modal'))
+            document.getElementById('siteng-idle-modal').classList.remove('active');
+    });
+
+    // Pagination
+    document.getElementById('siteng-idle-modal-prev')?.addEventListener('click', async () => {
+        if (seIdlePage <= 1) return;
+        seIdlePage--;
+        await fetchSiteEngIdleDetailed(seIdlePage, false);
+    });
+    document.getElementById('siteng-idle-modal-next')?.addEventListener('click', async () => {
+        if (seIdlePage >= Math.ceil(seIdleTotal / seIdleLimit)) return;
+        seIdlePage++;
+        await fetchSiteEngIdleDetailed(seIdlePage, false);
+    });
+
+    // Export idle engineers
+    document.getElementById('siteng-idle-modal-export-btn')?.addEventListener('click', exportSiteEngIdleExcel);
+
+    // Set today's date as default for date picker
+    const sitengDatePicker = document.getElementById('siteng-date-picker');
+    if (sitengDatePicker && !sitengDatePicker.value) {
+        sitengDatePicker.value = new Date().toISOString().split('T')[0];
+    }
+});
+
 // ── SECTION 6: DIRECTOR DASHBOARD CONTROLLER
+
+// ── Universal view-switcher utility ─────────────────────────────────────────
+function hideAllDashboardViews() {
+    document.getElementById('dashboard-loading-spinner')?.classList.add('hidden');
+    document.getElementById('dashboard-main-content')?.classList.add('hidden');
+    document.getElementById('director-dashboard-view')?.classList.add('hidden');
+    document.getElementById('siteng-dashboard-view')?.classList.add('hidden');
+    document.getElementById('hr-dashboard-view')?.classList.add('hidden');
+}
 
 let dirChartAttendanceTrends = null;
 let dirChartWorkforceShare = null;
+let dirVendorPayChart = null;
 let directorDataCache = null;
 
 async function fetchDirectorData() {
@@ -1917,17 +2424,61 @@ async function fetchDirectorData() {
         : '/api/v1';
 
     try {
-        const response = await fetch(`${API_BASE_URL}/dashboard/director-data?date=${targetDate}`);
+        const dirState = document.getElementById('director-state-filter')?.value || 'all';
+        const dirCust  = document.getElementById('director-customer-filter')?.value || 'all';
+        const response = await fetch(`${API_BASE_URL}/dashboard/director-data?date=${targetDate}&state=${encodeURIComponent(dirState)}&customerId=${encodeURIComponent(dirCust)}`);
         if (!response.ok) throw new Error('API server returned bad status code');
         const result = await response.json();
         
         directorDataCache = result.data;
         renderDirectorDashboard(directorDataCache);
 
+        // Populate state dropdown from API metadata
+        const stateSelect = document.getElementById('director-state-filter');
+        if (stateSelect && result.data.availableStates?.length) {
+            const current = stateSelect.value;
+            stateSelect.innerHTML = '<option value="all">All States</option>';
+            result.data.availableStates.forEach(s => {
+                const opt = document.createElement('option');
+                opt.value = s; opt.textContent = s;
+                if (s === current) opt.selected = true;
+                stateSelect.appendChild(opt);
+            });
+        }
+        // Populate customer/project dropdown
+        const custSelect = document.getElementById('director-customer-filter');
+        if (custSelect && result.data.availableCustomers?.length) {
+            const current = custSelect.value;
+            custSelect.innerHTML = '<option value="all">All Projects</option>';
+            result.data.availableCustomers.forEach(c => {
+                const opt = document.createElement('option');
+                opt.value = c.id; opt.textContent = c.name;
+                if (c.id === current) opt.selected = true;
+                custSelect.appendChild(opt);
+            });
+        }
+
         // Load and draw map markers
         loadGoogleMapsScript(() => {
             renderGoogleMap(directorDataCache.engineerLocations || []);
         }, directorDataCache.googleMapsApiKey);
+
+        // Populate map-stat panel
+        if (directorDataCache.engineerUtilization) {
+            const eu = directorDataCache.engineerUtilization;
+            const deployed = document.getElementById('map-stat-deployed');
+            const idle     = document.getElementById('map-stat-idle');
+            const onleave  = document.getElementById('map-stat-onleave');
+            if (deployed) deployed.textContent = eu.deployedEngineers ?? '-';
+            if (idle)     idle.textContent     = eu.idleEngineers    ?? '-';
+            if (onleave)  onleave.textContent  = eu.onLeave          ?? '-';
+        }
+
+        // Fetch payment analytics and vendor payment analysis for Director Dashboard
+        fetchDirectorPaymentAnalytics();
+        fetchVendorPaymentAnalysis();
+        fetchDirectorLeaveTable();
+
     } catch (err) {
         console.error('Error fetching Director Dashboard data:', err);
     }
@@ -2104,22 +2655,24 @@ function renderDirectorDashboard(data) {
         });
     }
 
-    // Sites At Risk Table
+    // Sites At Risk Table (element may not exist if section was removed)
     const sitesRiskBody = document.getElementById('dir-sites-risk-table-body');
-    sitesRiskBody.innerHTML = '';
-    if (alerts.sitesWithoutEngineers.length === 0) {
-        sitesRiskBody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: #888;">No unstaffed sites.</td></tr>';
-    } else {
-        alerts.sitesWithoutEngineers.forEach(s => {
-            sitesRiskBody.innerHTML += `
-                <tr>
-                    <td>${s.siteId || 'N/A'}</td>
-                    <td><strong>${s.name}</strong></td>
-                    <td>${s.projectName}</td>
-                    <td>${s.state} / ${s.district}</td>
-                </tr>
-            `;
-        });
+    if (sitesRiskBody) {
+        sitesRiskBody.innerHTML = '';
+        if (alerts.sitesWithoutEngineers.length === 0) {
+            sitesRiskBody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: #888;">No unstaffed sites.</td></tr>';
+        } else {
+            alerts.sitesWithoutEngineers.forEach(s => {
+                sitesRiskBody.innerHTML += `
+                    <tr>
+                        <td>${s.siteId || 'N/A'}</td>
+                        <td><strong>${s.name}</strong></td>
+                        <td>${s.projectName}</td>
+                        <td>${s.state} / ${s.district}</td>
+                    </tr>
+                `;
+            });
+        }
     }
 
     // 4. Render Charts
@@ -2127,49 +2680,28 @@ function renderDirectorDashboard(data) {
 }
 
 function renderDirectorCharts(chartData) {
-    // 30 Days Attendance Trends Chart
-    const trendDates = chartData.attendanceTrend.map(t => {
-        const d = new Date(t.date);
-        return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-    });
-    const presentData = chartData.attendanceTrend.map(t => t.present);
-    const leaveData = chartData.attendanceTrend.map(t => t.leave);
-    const absentData = chartData.attendanceTrend.map(t => t.absent);
-
-    const trendOptions = {
-        series: [
-            { name: 'Present', data: presentData },
-            { name: 'On Leave', data: leaveData },
-            { name: 'Absent / Idle', data: absentData }
-        ],
-        chart: {
-            type: 'area',
-            height: 350,
-            toolbar: { show: false }
-        },
-        colors: ['#10b981', '#f59e0b', '#ef4444'],
-        stroke: { curve: 'smooth', width: 2 },
-        fill: { type: 'gradient', gradient: { opacityFrom: 0.3, opacityTo: 0.05 } },
-        xaxis: { categories: trendDates },
-        yaxis: { min: 0 },
-        legend: { position: 'top' }
-    };
-
-    if (dirChartAttendanceTrends) dirChartAttendanceTrends.destroy();
-    dirChartAttendanceTrends = new ApexCharts(document.querySelector("#dir-attendance-trends-chart"), trendOptions);
-    dirChartAttendanceTrends.render();
-
-    // Workforce Share Donut Chart
+    // Workforce Share Donut Chart (compact, legend on right)
+    const el = document.querySelector('#dir-workforce-share-chart');
+    if (!el || !chartData?.workforceDistribution) return;
+    const wd = chartData.workforceDistribution;
     const shareOptions = {
-        series: [chartData.workforceDistribution.present, chartData.workforceDistribution.leave, chartData.workforceDistribution.absent],
+        series: [Math.max(0, wd.present ?? 0), Math.max(0, wd.leave ?? 0), Math.max(0, wd.absent ?? 0)],
         labels: ['Present', 'On Leave', 'Absent / Idle'],
-        chart: { type: 'donut', height: 350 },
+        chart: { type: 'donut', height: 220, toolbar: { show: false } },
         colors: ['#10b981', '#f59e0b', '#ef4444'],
-        legend: { position: 'bottom' }
+        legend: { position: 'right', fontSize: '11px' },
+        plotOptions: { pie: { donut: { size: '55%' } } },
+        dataLabels: {
+            enabled: true,
+            formatter: (val) => val.toFixed(1) + '%',
+            style: { fontSize: '11px', fontWeight: '600', colors: ['#fff'] },
+            dropShadow: { enabled: false }
+        },
+        tooltip: { y: { formatter: (val) => `${val} engineers` } }
     };
 
     if (dirChartWorkforceShare) dirChartWorkforceShare.destroy();
-    dirChartWorkforceShare = new ApexCharts(document.querySelector("#dir-workforce-share-chart"), shareOptions);
+    dirChartWorkforceShare = new ApexCharts(el, shareOptions);
     dirChartWorkforceShare.render();
 }
 
@@ -2268,9 +2800,15 @@ function renderGoogleMap(locations) {
     }
 
     if (!googleMapInstance) {
+        const indiaBounds = new google.maps.LatLngBounds(
+            { lat: 6.4627,  lng: 68.1097 },   // SW corner
+            { lat: 35.6745, lng: 97.3953 }    // NE corner
+        );
         googleMapInstance = new google.maps.Map(mapElement, {
-            center: { lat: 20.5937, lng: 78.9629 }, // Center of India
+            center: { lat: 20.5937, lng: 78.9629 }, // Centre of India
             zoom: 5,
+            restriction: { latLngBounds: indiaBounds, strictBounds: false },
+            minZoom: 4,
             styles: [
                 {
                     "featureType": "administrative",
@@ -2374,7 +2912,7 @@ function renderGoogleMap(locations) {
             bounds.extend({ lat: parseFloat(loc.lat), lng: parseFloat(loc.lng) });
         });
         googleMapInstance.fitBounds(bounds);
-        
+
         const listener = google.maps.event.addListener(googleMapInstance, 'idle', () => {
             if (googleMapInstance.getZoom() > 10) {
                 googleMapInstance.setZoom(10);
@@ -2483,6 +3021,7 @@ function openDirectorKPIModal(type, title) {
 function closeDirectorModal() {
     const modal = document.getElementById('director-modal');
     if (modal) modal.classList.remove('active');
+    document.body.style.overflow = '';
 }
 
 async function exportDirectorKPIDrilldown(type, title, records) {
@@ -2569,3 +3108,893 @@ async function exportDirectorKPIDrilldown(type, title, records) {
     await downloadExcelWorkbook(workbook, filename);
 }
 
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// SECTION 9 — HR ANALYTICS DASHBOARD
+// ════════════════════════════════════════════════════════════════════════════
+
+let hrChartAttendance   = null;
+let hrChartLeaveStatus  = null;
+let hrLeaveReqPage      = 1;
+let hrLeaveReqLimit     = 10;
+let hrLeaveReqTotal     = 0;
+let hrLeaveReqStatus    = 'all';
+let hrCurrentData       = {};
+let hrLwpData           = [];
+let hrLeaveReqData      = [];
+
+// ── URL helpers ──────────────────────────────────────────────────────────────
+
+function hrApiBase() {
+    return '/api/v1/hr';
+}
+
+function hrParams() {
+    const month = document.getElementById('hr-month-select')?.value || currentMonth();
+    const state = document.getElementById('hr-state-filter')?.value || 'all';
+    return `?month=${encodeURIComponent(month)}&state=${encodeURIComponent(state)}`;
+}
+
+function currentMonth() {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+}
+
+function hrFmtInr(n) {
+    if (!n && n !== 0) return '—';
+    if (n >= 10000000) return `₹${(n/10000000).toFixed(1)}Cr`;
+    if (n >= 100000)   return `₹${(n/100000).toFixed(1)}L`;
+    if (n >= 1000)     return `₹${(n/1000).toFixed(1)}K`;
+    return `₹${Math.round(n).toLocaleString('en-IN')}`;
+}
+
+// ── Navigation / view toggle ─────────────────────────────────────────────────
+
+function showHrView() {
+    hideAllDashboardViews();
+    document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+    document.getElementById('nav-hr-dashboard')?.classList.add('active');
+    document.querySelector('.filters-container')?.classList.add('hidden');
+    const view = document.getElementById('hr-dashboard-view');
+    if (view) view.classList.remove('hidden');
+
+    const bc = document.getElementById('breadcrumb');
+    if (bc) bc.textContent = 'HR ANALYTICS';
+
+    fetchHrData();
+}
+
+// ── Main data fetch ──────────────────────────────────────────────────────────
+
+async function fetchHrData() {
+    const base   = hrApiBase();
+    const params = hrParams();
+    const lsParams = `${params}&status=${encodeURIComponent(hrLeaveReqStatus)}&page=${hrLeaveReqPage}&limit=${hrLeaveReqLimit}`;
+
+    try {
+        const [
+            headcountRes,
+            leaveSumRes,
+            expenseRes,
+            regularRes,
+            lwpRes,
+            heatmapRes,
+            pendingRes,
+            leaveReqRes
+        ] = await Promise.allSettled([
+            fetch(`${base}/headcount-summary${params}`).then(r => r.json()),
+            fetch(`${base}/leave-summary${params}`).then(r => r.json()),
+            fetch(`${base}/expense-summary${params}`).then(r => r.json()),
+            fetch(`${base}/regularization-summary${params}`).then(r => r.json()),
+            fetch(`${base}/lwp-monthly${params}`).then(r => r.json()),
+            fetch(`${base}/attendance-heatmap${params}`).then(r => r.json()),
+            fetch(`${base}/pending-approvals${params}`).then(r => r.json()),
+            fetch(`${base}/leave-requests${lsParams}`).then(r => r.json())
+        ]);
+
+        const get = (res) => res.status === 'fulfilled' && res.value?.success ? res.value.data : null;
+
+        const hc      = get(headcountRes);
+        const ls      = get(leaveSumRes);
+        const exp     = get(expenseRes);
+        const reg     = get(regularRes);
+        const lwp     = get(lwpRes);
+        const hm      = get(heatmapRes);
+        const pending = get(pendingRes);
+        const lrResp  = leaveReqRes.status === 'fulfilled' ? leaveReqRes.value : null;
+
+        // Cache for exports and KPI drilldowns
+        hrLwpData        = lwp?.employees       || [];
+        hrLeaveReqData   = lrResp?.data         || [];
+        hrLeaveReqTotal  = lrResp?.pagination?.total || 0;
+        hrCurrentData    = { hc, ls, exp, reg, lwp, hm, pending };
+        hrHeadcountCache = hc;
+
+        // Populate HR state dropdown (once, on first load if empty)
+        const hrStateSelect = document.getElementById('hr-state-filter');
+        if (hrStateSelect && hrStateSelect.options.length <= 1) {
+            try {
+                const statesRes = await fetch(`${hrApiBase()}/headcount-summary${hrParams()}`);
+                // States come from director data; fall back to site states via a separate call
+                const dirRes = await fetch('/api/v1/dashboard/director-data');
+                if (dirRes.ok) {
+                    const dirJson = await dirRes.json();
+                    const states = dirJson.data?.availableStates || [];
+                    const curVal = hrStateSelect.value;
+                    hrStateSelect.innerHTML = '<option value="all">All States</option>';
+                    states.forEach(s => {
+                        const opt = document.createElement('option');
+                        opt.value = s; opt.textContent = s;
+                        if (s === curVal) opt.selected = true;
+                        hrStateSelect.appendChild(opt);
+                    });
+                }
+            } catch (_) { /* dropdown stays with All States */ }
+        }
+
+        renderHrHeadcount(hc);
+        renderHrLeaveKPIs(ls);
+        renderHrExpenseKPIs(exp);
+        renderHrRegLwp(reg, lwp);
+        renderHrAttendanceChart(hm);
+        renderHrLeaveStatusChart(ls);
+        renderHrPendingApprovals(pending);
+        renderHrLeaveRequests(hrLeaveReqData);
+        renderHrLwpTable(hrLwpData);
+        renderHrLeavePageInfo();
+
+        if (typeof lucide !== 'undefined') lucide.createIcons();
+    } catch (err) {
+        console.error('[HR] fetchHrData error:', err);
+    }
+}
+
+// ── KPI Renders ──────────────────────────────────────────────────────────────
+
+function renderHrHeadcount(hc) {
+    if (!hc) return;
+    const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v ?? '-'; };
+    set('hr-kpi-total-active',   hc.totalActive);
+    set('hr-kpi-suspended',      hc.totalSuspended);
+    set('hr-kpi-site-engineers', hc.breakdown?.siteEngineers ?? '-');
+    set('hr-kpi-managers',       hc.breakdown?.managers ?? '-');
+}
+
+function renderHrLeaveKPIs(ls) {
+    if (!ls) return;
+    const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v ?? '-'; };
+    set('hr-kpi-leave-pending',  ls.pending);
+    set('hr-kpi-leave-approved', ls.approved);
+    set('hr-kpi-leave-rejected', ls.rejected);
+    set('hr-kpi-leave-days',     ls.totalApprovedDays);
+}
+
+function renderHrExpenseKPIs(exp) {
+    if (!exp) return;
+    const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v ?? '-'; };
+    set('hr-kpi-exp-pending-count',  exp.pending?.count  ?? '-');
+    set('hr-kpi-exp-approved-amt',   hrFmtInr(exp.approved?.amount));
+    set('hr-kpi-exp-rejected-count', exp.rejected?.count ?? '-');
+    set('hr-kpi-exp-total-amt',      hrFmtInr(exp.totalAmount));
+}
+
+function renderHrRegLwp(reg, lwp) {
+    const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v ?? '-'; };
+    if (reg) {
+        set('hr-kpi-absent-days', reg.absentPersonDays);
+        set('hr-kpi-absent-emps', reg.absentEmployeeCount);
+    }
+    if (lwp) {
+        set('hr-kpi-lwp-count', lwp.lwpCount);
+        set('hr-kpi-lwp-days',  lwp.totalLwpDays);
+    }
+}
+
+// ── Charts ───────────────────────────────────────────────────────────────────
+
+function renderHrAttendanceChart(series) {
+    const el = document.getElementById('hr-attendance-chart');
+    if (!el || !series || !series.length) return;
+
+    if (hrChartAttendance) { hrChartAttendance.destroy(); hrChartAttendance = null; }
+
+    const dates   = series.map(s => s.date);
+    const present = series.map(s => s.present);
+    const onLeave = series.map(s => s.onLeave);
+    const absent  = series.map(s => s.absent);
+
+    hrChartAttendance = new ApexCharts(el, {
+        series: [
+            { name: 'Present',  data: present },
+            { name: 'On Leave', data: onLeave },
+            { name: 'Absent',   data: absent  }
+        ],
+        chart: { type: 'area', height: 260, toolbar: { show: false }, animations: { enabled: false } },
+        colors: ['#10b981', '#f59e0b', '#ef4444'],
+        fill: { type: 'gradient', gradient: { opacityFrom: 0.5, opacityTo: 0.1 } },
+        stroke: { curve: 'smooth', width: 2 },
+        xaxis: {
+            categories: dates,
+            labels: { rotate: -45, rotateAlways: false, style: { fontSize: '10px' }, formatter: (v) => v ? v.substring(5) : v },
+            tickAmount: 10
+        },
+        yaxis: { labels: { style: { fontSize: '11px' } } },
+        legend: { position: 'top' },
+        tooltip: { x: { format: 'yyyy-MM-dd' } },
+        dataLabels: { enabled: false },
+        grid: { borderColor: 'rgba(255,255,255,0.1)', strokeDashArray: 3 }
+    });
+    hrChartAttendance.render();
+}
+
+function renderHrLeaveStatusChart(ls) {
+    const el = document.getElementById('hr-leave-status-chart');
+    if (!el || !ls) return;
+
+    if (hrChartLeaveStatus) { hrChartLeaveStatus.destroy(); hrChartLeaveStatus = null; }
+
+    hrChartLeaveStatus = new ApexCharts(el, {
+        series: [ls.pending || 0, ls.approved || 0, ls.rejected || 0],
+        chart:  { type: 'donut', height: 260 },
+        labels: ['Pending', 'Approved', 'Rejected'],
+        colors: ['#f59e0b', '#10b981', '#ef4444'],
+        plotOptions: { pie: { donut: { size: '65%', labels: { show: true, total: { show: true, label: 'Total' } } } } },
+        legend: { position: 'bottom' },
+        dataLabels: {
+            enabled: true,
+            formatter: (val) => val.toFixed(1) + '%',
+            style: { fontSize: '11px', fontWeight: '600', colors: ['#fff'] },
+            dropShadow: { enabled: false }
+        }
+    });
+    hrChartLeaveStatus.render();
+}
+
+// ── Table Renders ─────────────────────────────────────────────────────────────
+
+function renderHrPendingApprovals(pending) {
+    const tbody = document.getElementById('hr-pending-approvals-tbody');
+    if (!tbody || !pending) return;
+
+    const lBadge = document.getElementById('hr-pending-leave-badge');
+    const eBadge = document.getElementById('hr-pending-exp-badge');
+    if (lBadge) lBadge.textContent = `${pending.pendingLeaveCount ?? 0} Leaves`;
+    if (eBadge) eBadge.textContent = `${pending.pendingExpenseCount ?? 0} Expenses`;
+
+    const items = pending.items || [];
+    if (!items.length) {
+        tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;color:var(--text-muted);">No pending approvals</td></tr>';
+        return;
+    }
+    tbody.innerHTML = items.slice(0, 15).map(item => `
+        <tr>
+            <td>
+                <div style="font-weight:600;font-size:13px;">${escapeHtml(item.fullName)}</div>
+                <div style="font-size:11px;color:var(--text-muted);">${escapeHtml(item.designation)}</div>
+            </td>
+            <td>
+                <span style="padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:${item.type==='leave'?'#fef3c7':'#ede9fe'};color:${item.type==='leave'?'#92400e':'#5b21b6'}">
+                    ${item.type === 'leave' ? 'Leave' : 'Expense'}
+                </span>
+            </td>
+            <td style="font-size:12px;color:var(--text-muted);">${escapeHtml(item.detail)}</td>
+        </tr>`).join('');
+}
+
+function renderHrLeaveRequests(rows) {
+    const tbody = document.getElementById('hr-leave-requests-tbody');
+    if (!tbody) return;
+    if (!rows || !rows.length) {
+        tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--text-muted);">No records</td></tr>';
+        return;
+    }
+    const statusColor = { Pending: '#f59e0b', Approved: '#10b981', Rejected: '#ef4444' };
+    const statusBg    = { Pending: '#fef3c7', Approved: '#d1fae5', Rejected: '#fee2e2' };
+    tbody.innerHTML = rows.map(r => `
+        <tr>
+            <td>
+                <div style="font-weight:600;font-size:13px;">${escapeHtml(r.fullName)}</div>
+                <div style="font-size:11px;color:var(--text-muted);">${escapeHtml(r.employeeId)} · ${escapeHtml(r.type)}</div>
+            </td>
+            <td style="font-size:12px;">${r.startDate ? r.startDate.substring(0,10) : '-'}<br><span style="color:var(--text-muted)">to ${r.endDate ? r.endDate.substring(0,10) : '-'}</span></td>
+            <td style="text-align:center;font-weight:600;">${r.days}</td>
+            <td style="text-align:center;">
+                <span style="padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:${statusBg[r.status]||'#f3f4f6'};color:${statusColor[r.status]||'#374151'}">
+                    ${escapeHtml(r.status)}
+                </span>
+            </td>
+        </tr>`).join('');
+}
+
+function renderHrLeavePageInfo() {
+    const info = document.getElementById('hr-leave-page-info');
+    if (info) {
+        const totalPages = Math.max(1, Math.ceil(hrLeaveReqTotal / hrLeaveReqLimit));
+        info.textContent = `Page ${hrLeaveReqPage} / ${totalPages} (${hrLeaveReqTotal} total)`;
+    }
+    const prevBtn = document.getElementById('hr-leave-prev-btn');
+    const nextBtn = document.getElementById('hr-leave-next-btn');
+    if (prevBtn) prevBtn.disabled = hrLeaveReqPage <= 1;
+    if (nextBtn) nextBtn.disabled = hrLeaveReqPage * hrLeaveReqLimit >= hrLeaveReqTotal;
+}
+
+function renderHrLwpTable(rows) {
+    const tbody = document.getElementById('hr-lwp-tbody');
+    if (!tbody) return;
+    if (!rows || !rows.length) {
+        tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--text-muted);">No LWP records for this period</td></tr>';
+        return;
+    }
+    tbody.innerHTML = rows.map(r => `
+        <tr>
+            <td>
+                <div style="font-weight:600;font-size:13px;">${escapeHtml(r.fullName)}</div>
+                <div style="font-size:11px;color:var(--text-muted);">${escapeHtml(r.employeeId)}</div>
+            </td>
+            <td style="font-size:12px;">${escapeHtml(r.designation)}</td>
+            <td style="font-size:12px;color:var(--text-muted);">${escapeHtml(r.managerName)}</td>
+            <td style="text-align:center;font-weight:700;color:#ef4444;">${r.days}</td>
+        </tr>`).join('');
+}
+
+// ── Exports ───────────────────────────────────────────────────────────────────
+
+async function exportHrLeaves() {
+    if (!hrLeaveReqData.length) { alert('No leave data to export'); return; }
+    const workbook  = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Leave Requests');
+    worksheet.columns = [
+        { header: 'Employee ID', key: 'employeeId', width: 14 },
+        { header: 'Name',        key: 'fullName',   width: 24 },
+        { header: 'Designation', key: 'designation',width: 20 },
+        { header: 'Manager',     key: 'managerName',width: 22 },
+        { header: 'Type',        key: 'type',       width: 14 },
+        { header: 'Start Date',  key: 'startDate',  width: 14 },
+        { header: 'End Date',    key: 'endDate',    width: 14 },
+        { header: 'Days',        key: 'days',       width: 8  },
+        { header: 'Status',      key: 'status',     width: 12 }
+    ];
+    hrLeaveReqData.forEach(r => worksheet.addRow(r));
+    const hdr = worksheet.getRow(1);
+    hdr.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    hdr.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF6366F1' } };
+    await downloadExcelWorkbook(workbook, `Leave_Requests_${hrParams().replace(/[^0-9a-z-]/gi,'_')}.xlsx`);
+}
+
+async function exportHrLwp() {
+    if (!hrLwpData.length) { alert('No LWP data to export'); return; }
+    const workbook  = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('LWP Summary');
+    worksheet.columns = [
+        { header: 'Employee ID', key: 'employeeId', width: 14 },
+        { header: 'Name',        key: 'fullName',   width: 24 },
+        { header: 'Designation', key: 'designation',width: 20 },
+        { header: 'Manager',     key: 'managerName',width: 22 },
+        { header: 'Start Date',  key: 'startDate',  width: 14 },
+        { header: 'End Date',    key: 'endDate',    width: 14 },
+        { header: 'LWP Days',    key: 'days',       width: 10 }
+    ];
+    hrLwpData.forEach(r => worksheet.addRow(r));
+    const hdr = worksheet.getRow(1);
+    hdr.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    hdr.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEF4444' } };
+    await downloadExcelWorkbook(workbook, `LWP_Summary_${hrParams().replace(/[^0-9a-z-]/gi,'_')}.xlsx`);
+}
+
+// ── Event Listeners ───────────────────────────────────────────────────────────
+
+document.addEventListener('DOMContentLoaded', () => {
+    // Nav click
+    document.getElementById('nav-hr-dashboard')?.addEventListener('click', (e) => {
+        e.preventDefault();
+        showHrView();
+    });
+
+    // Refresh
+    document.getElementById('hr-refresh-btn')?.addEventListener('click', fetchHrData);
+
+    // Month / State filters
+    document.getElementById('hr-month-select')?.addEventListener('change', fetchHrData);
+    document.getElementById('hr-state-filter')?.addEventListener('change', fetchHrData);
+
+    // Leave status filter
+    document.getElementById('hr-leave-status-filter')?.addEventListener('change', (e) => {
+        hrLeaveReqStatus = e.target.value;
+        hrLeaveReqPage   = 1;
+        fetchHrData();
+    });
+
+    // Pagination
+    document.getElementById('hr-leave-prev-btn')?.addEventListener('click', () => {
+        if (hrLeaveReqPage > 1) { hrLeaveReqPage--; fetchHrData(); }
+    });
+    document.getElementById('hr-leave-next-btn')?.addEventListener('click', () => {
+        if (hrLeaveReqPage * hrLeaveReqLimit < hrLeaveReqTotal) { hrLeaveReqPage++; fetchHrData(); }
+    });
+
+    // Exports
+    document.getElementById('hr-export-leaves-btn')?.addEventListener('click', exportHrLeaves);
+    document.getElementById('hr-export-lwp-btn')?.addEventListener('click', exportHrLwp);
+
+    // Default month to current
+    const ms = document.getElementById('hr-month-select');
+    if (ms) {
+        const now = new Date();
+        const val = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+        if ([...ms.options].some(o => o.value === val)) ms.value = val;
+    }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SECTION 9: PAYMENT MANAGEMENT MODULE
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function payApiBase() {
+    const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    return isLocal ? 'http://127.0.0.1:5000/api/v1/dashboard' : '/api/v1/dashboard';
+}
+
+// ── INR formatter ────────────────────────────────────────────────────────────
+function fmtInr(n) {
+    if (n == null) return '—';
+    return '₹' + Math.round(n).toLocaleString('en-IN');
+}
+
+// ── State ────────────────────────────────────────────────────────────────────
+let payPage     = 1;
+const payLimit  = 20;
+let payTotal    = 0;
+let payData     = [];
+
+// ── Director Dashboard: Vendor Payment Distribution ──────────────────────────
+async function fetchDirectorPaymentAnalytics() {
+    try {
+        const base = payApiBase();
+        const [distRes, costRes] = await Promise.all([
+            fetch(`${base}/vendor-payment-distribution`).then(r => r.json()),
+            fetch(`${base}/operations-cost`).then(r => r.json())
+        ]);
+
+        // Pie chart
+        renderVendorPaymentChart(distRes);
+
+        // Operations cost table
+        renderOperationsCostTable(costRes.data || []);
+
+    } catch (err) {
+        console.error('Payment analytics fetch failed:', err);
+    }
+}
+
+function renderVendorPaymentChart(data) {
+    const chartEl = document.getElementById('dir-vendor-payment-chart');
+    const emptyEl = document.getElementById('dir-vendor-payment-empty');
+    if (!chartEl) return;
+
+    const withPo    = data.withPo    || { count: 0, amount: 0 };
+    const withoutPo = data.withoutPo || { count: 0, amount: 0 };
+
+    if (withPo.count === 0 && withoutPo.count === 0) {
+        chartEl.style.display = 'none';
+        if (emptyEl) emptyEl.style.display = '';
+        return;
+    }
+    if (emptyEl) emptyEl.style.display = 'none';
+    chartEl.style.display = '';
+
+    if (dirVendorPayChart) {
+        dirVendorPayChart.destroy();
+        dirVendorPayChart = null;
+    }
+
+    dirVendorPayChart = new ApexCharts(chartEl, {
+        chart: { type: 'pie', height: 200, fontFamily: "'Public Sans', sans-serif" },
+        labels: [
+            `With PO (${fmtInr(withPo.amount)})`,
+            `Without PO (${fmtInr(withoutPo.amount)})`
+        ],
+        series: [withPo.amount, withoutPo.amount],
+        colors: ['#6366f1', '#10b981'],
+        legend: { position: 'right', fontSize: '12px' },
+        tooltip: {
+            y: { formatter: v => fmtInr(v) }
+        },
+        dataLabels: {
+            formatter: (val) => val.toFixed(1) + '%'
+        }
+    });
+    dirVendorPayChart.render();
+}
+
+function renderOperationsCostTable(rows) {
+    const tbody = document.getElementById('dir-operations-cost-tbody');
+    if (!tbody) return;
+
+    if (!rows.length) {
+        tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:var(--text-muted); padding:20px;">No completed payment data available</td></tr>`;
+        return;
+    }
+
+    // Push "Unknown" site rows to the end
+    const sorted = [...rows].sort((a, b) => {
+        const aUnk = !a.siteName || a.siteName === 'Unknown Site';
+        const bUnk = !b.siteName || b.siteName === 'Unknown Site';
+        if (aUnk && !bUnk) return 1;
+        if (!aUnk && bUnk) return -1;
+        return 0;
+    });
+
+    tbody.innerHTML = sorted.map(r => `
+        <tr>
+            <td><strong>${r.siteName || 'Unknown'}</strong></td>
+            <td>${r.project || '—'}</td>
+            <td>${r.state  || '—'}</td>
+            <td style="text-align:right; font-weight:700; color:#1e1b4b;">${fmtInr(r.totalPayments)}</td>
+        </tr>
+    `).join('');
+}
+
+// ── Vendor Payment Analysis ──────────────────────────────────────────────────
+let vpaCache = [];
+
+async function fetchVendorPaymentAnalysis() {
+    const tbody = document.getElementById('vpa-table-tbody');
+    if (tbody) tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;padding:32px;color:var(--text-muted);">Loading…</td></tr>`;
+    try {
+        const mode = document.getElementById('vpa-mode-filter')?.value || 'all';
+        const url  = `${payApiBase()}/payments/analysis?mode=${encodeURIComponent(mode)}`;
+        const res  = await fetch(url).then(r => r.json());
+        vpaCache   = res.data || [];
+        renderVendorPaymentAnalysis(vpaCache);
+    } catch (err) {
+        if (tbody) tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;padding:32px;color:#ef4444;">Failed to load payment data.</td></tr>`;
+        console.error('[VPA]', err);
+    }
+}
+
+function renderVendorPaymentAnalysis(rows) {
+    const tbody = document.getElementById('vpa-table-tbody');
+    if (!tbody) return;
+    if (!rows || !rows.length) {
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;padding:32px;color:var(--text-muted);">No payment records found</td></tr>`;
+        return;
+    }
+    const modeClass = m => /with.po/i.test(m || '') ? 'badge-mode-po' : 'badge-mode-nopo';
+    tbody.innerHTML = rows.map((r, i) => `
+        <tr>
+            <td><strong>${r.customerName || '—'}</strong></td>
+            <td>${r.siteName || '—'}</td>
+            <td style="text-align:right;font-weight:700;color:#1e1b4b;">${fmtInr(r.amount || 0)}</td>
+            <td>${r.createdByName || '—'}</td>
+            <td>${r.accountantName || '—'}</td>
+        </tr>`).join('');
+}
+
+async function exportVendorPaymentExcel() {
+    if (!vpaCache.length) { alert('No data to export.'); return; }
+    const workbook  = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Vendor Payment Analysis');
+
+    worksheet.columns = [
+        { header: 'Request Name',  key: 'requestName',    width: 20 },
+        { header: 'Customer Name', key: 'customerName',   width: 26 },
+        { header: 'Site Name',     key: 'siteName',       width: 26 },
+        { header: 'Amount (INR)', key: 'amount',          width: 16 },
+        { header: 'Type',          key: 'requestMode',    width: 16 },
+        { header: 'Created By',    key: 'createdByName',  width: 22 },
+        { header: 'Accountant',    key: 'accountantName', width: 22 }
+    ];
+
+    vpaCache.forEach(r => worksheet.addRow({
+        requestName:    r.requestName    || '',
+        customerName:   r.customerName   || '',
+        siteName:       r.siteName       || '',
+        amount:         r.amount         || 0,
+        requestMode:    r.requestMode    || '',
+        createdByName:  r.createdByName  || '',
+        accountantName: r.accountantName || ''
+    }));
+
+    const hdr = worksheet.getRow(1);
+    hdr.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    hdr.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF6366F1' } };
+    hdr.alignment = { vertical: 'middle', horizontal: 'center' };
+    worksheet.getColumn('amount').numFmt = '₹#,##0';
+
+    await downloadExcelWorkbook(workbook, `VendorPaymentAnalysis_${new Date().toISOString().slice(0,10)}.xlsx`);
+}
+
+// ── Director Employee-wise Leave Table ────────────────────────────────────────
+let dirLeavePage  = 1;
+const dirLeaveLimit = 20;
+let dirLeaveTotal = 0;
+let dirLeaveCache = [];
+
+async function fetchDirectorLeaveTable() {
+    const tbody = document.getElementById('dir-leave-table-tbody');
+    if (tbody) tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;padding:32px;color:var(--text-muted);">Loading…</td></tr>`;
+
+    try {
+        const month = document.getElementById('dir-leave-month-filter')?.value || 'all';
+        const emp   = document.getElementById('dir-leave-emp-filter')?.value   || 'all';
+        const type  = document.getElementById('dir-leave-type-filter')?.value  || 'all';
+        const url   = `${payApiBase()}/employee-leaves?month=${encodeURIComponent(month)}&employeeId=${encodeURIComponent(emp)}&type=${encodeURIComponent(type)}&page=${dirLeavePage}&limit=${dirLeaveLimit}`;
+        const res   = await fetch(url).then(r => r.json());
+        const data  = res.data || {};
+
+        dirLeaveTotal = data.total || 0;
+        dirLeaveCache = data.records || [];
+
+        // Populate filter dropdowns (only on first load)
+        const empSel  = document.getElementById('dir-leave-emp-filter');
+        const typeSel = document.getElementById('dir-leave-type-filter');
+        if (empSel && empSel.options.length <= 1 && data.employees?.length) {
+            data.employees.forEach(e => {
+                const o = document.createElement('option');
+                o.value = e.id; o.textContent = e.name;
+                empSel.appendChild(o);
+            });
+        }
+        if (typeSel && typeSel.options.length <= 1 && data.types?.length) {
+            data.types.forEach(t => {
+                const o = document.createElement('option');
+                o.value = t; o.textContent = t;
+                typeSel.appendChild(o);
+            });
+        }
+        // Populate month dropdown (last 12 months) on first load
+        const monthSel = document.getElementById('dir-leave-month-filter');
+        if (monthSel && monthSel.options.length <= 1) {
+            const now = new Date();
+            for (let i = 0; i < 13; i++) {
+                const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+                const val = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+                const o   = document.createElement('option');
+                o.value = val; o.textContent = val;
+                monthSel.appendChild(o);
+            }
+        }
+
+        renderDirectorLeaveTable(dirLeaveCache);
+
+        const pages   = Math.ceil(dirLeaveTotal / dirLeaveLimit) || 1;
+        const pgInfo  = document.getElementById('dir-leave-page-info');
+        if (pgInfo) pgInfo.textContent = `Page ${dirLeavePage} of ${pages}`;
+        const prevBtn = document.getElementById('dir-leave-prev-btn');
+        const nextBtn = document.getElementById('dir-leave-next-btn');
+        if (prevBtn) prevBtn.disabled = dirLeavePage <= 1;
+        if (nextBtn) nextBtn.disabled = dirLeavePage >= pages;
+
+    } catch (err) {
+        if (tbody) tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;padding:32px;color:#ef4444;">Failed to load leave data.</td></tr>`;
+        console.error('[DirLeaves]', err);
+    }
+}
+
+const LEAVE_ABBR = { 'Casual Leave': 'CL', 'Earned Leave': 'EL', 'Earned Leaves': 'EL', 'Loss of Pay': 'LOP', 'Sick Leave': 'SL', 'Bereavement Leave': 'BL' };
+function abbrevLeaveType(t) {
+    if (!t) return '—';
+    return LEAVE_ABBR[t] || LEAVE_ABBR[t.trim()] || t;
+}
+
+function renderDirectorLeaveTable(rows) {
+    const tbody = document.getElementById('dir-leave-table-tbody');
+    if (!tbody) return;
+    if (!rows || !rows.length) {
+        tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;padding:32px;color:var(--text-muted);">No approved leave records found</td></tr>`;
+        return;
+    }
+    tbody.innerHTML = rows.map(r => {
+        const d = r.startDate ? new Date(r.startDate).toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' }) : '—';
+        return `<tr>
+            <td><strong>${r.employeeName || '—'}</strong></td>
+            <td><span style="padding:2px 8px;border-radius:8px;font-size:11px;font-weight:700;background:rgba(99,102,241,0.12);color:#6366f1;">${abbrevLeaveType(r.type)}</span></td>
+            <td>${d}</td>
+            <td style="text-align:center;font-weight:600;">${r.duration ?? '—'}</td>
+        </tr>`;
+    }).join('');
+}
+
+async function exportDirectorLeavesExcel() {
+    if (!dirLeaveCache.length) { alert('No data to export.'); return; }
+    const workbook  = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Employee Leaves');
+
+    worksheet.columns = [
+        { header: 'Employee Name', key: 'employeeName', width: 26 },
+        { header: 'Leave Type',    key: 'type',         width: 14 },
+        { header: 'Start Date',    key: 'startDate',    width: 16 },
+        { header: 'Duration (Days)', key: 'duration',   width: 14 },
+        { header: 'Approved By',   key: 'approvedBy',   width: 22 }
+    ];
+
+    dirLeaveCache.forEach(r => worksheet.addRow({
+        employeeName: r.employeeName || '',
+        type:         abbrevLeaveType(r.type),
+        startDate:    r.startDate ? new Date(r.startDate).toLocaleDateString('en-IN') : '',
+        duration:     r.duration  || '',
+        approvedBy:   r.approvedBy || '—'
+    }));
+
+    const hdr = worksheet.getRow(1);
+    hdr.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    hdr.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF10B981' } };
+    hdr.alignment = { vertical: 'middle', horizontal: 'center' };
+
+    await downloadExcelWorkbook(workbook, `EmployeeLeaves_${new Date().toISOString().slice(0,10)}.xlsx`);
+}
+
+// ── KPI Drilldown Modal — shared across all dashboards ────────────────────────
+let hrHeadcountCache  = null;
+let sitengKpiCache    = null;
+let sitengStatusCache = null;
+
+function openGenericKPIModal(title, columns, rows) {
+    const modal    = document.getElementById('director-modal');
+    const titleEl  = document.getElementById('director-modal-title');
+    const headerEl = document.getElementById('director-modal-table-header');
+    const bodyEl   = document.getElementById('director-modal-table-body');
+    if (!modal || !bodyEl) return;
+
+    try {
+        titleEl.textContent = title;
+        headerEl.innerHTML  = `<tr>${columns.map(c => `<th>${c}</th>`).join('')}</tr>`;
+
+        if (!rows || !rows.length) {
+            bodyEl.innerHTML = `<tr><td colspan="${columns.length}" style="text-align:center;padding:20px;color:var(--text-muted);">No records found</td></tr>`;
+        } else {
+            bodyEl.innerHTML = rows.slice(0, 500).map(r =>
+                `<tr>${columns.map((_, i) => `<td>${Object.values(r)[i] ?? '—'}</td>`).join('')}</tr>`
+            ).join('');
+        }
+
+        modal.style.display = '';  // clear any inline override
+        modal.classList.add('active');
+        document.body.style.overflow = 'hidden';
+    } catch (err) {
+        console.error('[KPIModal]', err);
+        document.body.style.overflow = '';
+    }
+}
+
+function openHrKPIModal(type) {
+    if (!hrHeadcountCache?.lists) return;
+    const titles = { active: 'Active Employees', suspended: 'Suspended Employees', siteEngineers: 'Site Engineers', managers: 'Managers / PMs' };
+    const rows   = hrHeadcountCache.lists[type] || [];
+    openGenericKPIModal(titles[type] || type, ['Name', 'Designation'], rows.map(r => ({ name: r.name, designation: r.designation })));
+}
+
+function openSitengKPIModal(type) {
+    if (!sitengKpiCache?.lists) return;
+    const titles = { targetSites: 'All Target Sites', doneSites: 'Completed Sites', visibilitySites: 'Active / Visibility Sites', totalFieldForce: 'Total Field Force', deployedManpower: 'Deployed Today' };
+    const lists  = sitengKpiCache.lists;
+    const isSite = ['targetSites', 'doneSites', 'visibilitySites'].includes(type);
+    const rows   = lists[type] || [];
+    const cols   = isSite ? ['Site Name', 'State', 'District', 'Status'] : ['Name', 'Designation', 'Manager'];
+    const mapped = isSite ? rows.map(r => ({ name: r.name, state: r.state, district: r.district, status: r.status }))
+                          : rows.map(r => ({ name: r.name, designation: r.designation, manager: r.manager }));
+    openGenericKPIModal(titles[type] || type, cols, mapped);
+}
+
+function openSitengStatusModal(type) {
+    if (!sitengStatusCache?.lists) return;
+    const titles = { onSite: 'On Site Today', atOffice: 'At Office Today', traveling: 'Travelling Today', onLeave: 'On Leave Today', onLWP: 'On LWP Today', idle: 'Idle Today' };
+    const rows = (sitengStatusCache.lists[type] || []).map(r => ({ name: r.name, designation: r.designation }));
+    if (!rows.length) { openGenericKPIModal(titles[type] || type, ['Name', 'Designation'], [{ name: 'No records', designation: '' }]); return; }
+    openGenericKPIModal(titles[type] || type, ['Name', 'Designation'], rows);
+}
+
+function openHrLeaveKPIModal(type) {
+    const titles = { pending: 'Pending Leave Requests', approved: 'Approved Leave Requests', rejected: 'Rejected Leave Requests', days: 'Approved Leave Days' };
+    const statusMap = { pending: 'Pending', approved: 'Approved', rejected: 'Rejected', days: 'Approved' };
+    const filterStatus = statusMap[type];
+    let rows = hrLeaveReqData || [];
+    if (filterStatus) rows = rows.filter(r => (r.status || '').toLowerCase() === filterStatus.toLowerCase());
+    const mapped = rows.slice(0, 200).map(r => ({
+        name: r.employeeName || r.userId || '—',
+        type: r.leaveType || r.type || '—',
+        from: r.startDate || '—',
+        to:   r.endDate   || '—',
+        status: r.status  || '—'
+    }));
+    openGenericKPIModal(titles[type] || type, ['Employee', 'Type', 'From', 'To', 'Status'], mapped);
+}
+
+function openHrExpenseKPIModal(type) {
+    const pending = hrCurrentData?.pending || [];
+    const titles  = { pendingClaims: 'Pending Expense Claims', approvedAmt: 'Approved Expenses', rejectedClaims: 'Rejected Expense Claims', totalClaimed: 'All Expense Claims' };
+    let rows = [];
+    if (type === 'pendingClaims')  rows = pending.filter(e => (e.status || '').toLowerCase() === 'pending');
+    else if (type === 'approvedAmt') rows = pending.filter(e => (e.status || '').toLowerCase() === 'approved');
+    else if (type === 'rejectedClaims') rows = pending.filter(e => (e.status || '').toLowerCase() === 'rejected');
+    else rows = pending;
+    const mapped = rows.slice(0, 200).map(r => ({
+        name:   r.employeeName || r.userId || '—',
+        type:   r.expenseType  || r.type   || '—',
+        amount: r.amount != null ? `₹${Number(r.amount).toLocaleString('en-IN')}` : '—',
+        status: r.status || '—'
+    }));
+    if (!mapped.length) { openGenericKPIModal(titles[type] || type, ['Employee', 'Type', 'Amount', 'Status'], [{ name: 'No records', type: '', amount: '', status: '' }]); return; }
+    openGenericKPIModal(titles[type] || type, ['Employee', 'Type', 'Amount', 'Status'], mapped);
+}
+
+// ── All DOMContentLoaded event listeners ─────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+    // Vendor Payment Analysis
+    document.getElementById('vpa-mode-filter')?.addEventListener('change', fetchVendorPaymentAnalysis);
+    document.getElementById('vpa-export-btn')?.addEventListener('click', exportVendorPaymentExcel);
+
+    // Director expense export (mirrored button in director dashboard)
+    document.getElementById('export-expenses-btn-dir')?.addEventListener('click', exportCustomerExpensesList);
+
+    // Director Employee Leave table
+    document.getElementById('dir-leave-month-filter')?.addEventListener('change', () => { dirLeavePage = 1; fetchDirectorLeaveTable(); });
+    document.getElementById('dir-leave-emp-filter')?.addEventListener('change',   () => { dirLeavePage = 1; fetchDirectorLeaveTable(); });
+    document.getElementById('dir-leave-type-filter')?.addEventListener('change',  () => { dirLeavePage = 1; fetchDirectorLeaveTable(); });
+    document.getElementById('dir-leave-prev-btn')?.addEventListener('click', () => { if (dirLeavePage > 1) { dirLeavePage--; fetchDirectorLeaveTable(); } });
+    document.getElementById('dir-leave-next-btn')?.addEventListener('click', () => { if (dirLeavePage * dirLeaveLimit < dirLeaveTotal) { dirLeavePage++; fetchDirectorLeaveTable(); } });
+    document.getElementById('dir-leave-export-btn')?.addEventListener('click', exportDirectorLeavesExcel);
+
+    // Siteng KPI cards
+    const seCardsMap = {
+        'card-se-target-sites':     'targetSites',
+        'card-se-done-sites':       'doneSites',
+        'card-se-visibility-sites': 'visibilitySites',
+        'card-se-deployed':         'deployedManpower'
+    };
+    Object.entries(seCardsMap).forEach(([cardId, type]) => {
+        document.getElementById(cardId)?.addEventListener('click', () => openSitengKPIModal(type));
+    });
+
+    // Siteng activity status cards (from engineer-status-today)
+    const seStatusMap = {
+        'card-se-act-onsite':    'onSite',
+        'card-se-act-travelling':'traveling',
+        'card-se-act-atoffice':  'atOffice',
+        'card-se-act-onleave':   'onLeave',
+        'card-se-act-lwp':       'onLWP',
+        'card-se-act-idle':      'idle'
+    };
+    Object.entries(seStatusMap).forEach(([cardId, type]) => {
+        document.getElementById(cardId)?.addEventListener('click', () => openSitengStatusModal(type));
+    });
+
+    // HR headcount KPI cards (all clickable)
+    const hrCardsMap = {
+        'card-hr-total-active':   'active',
+        'card-hr-suspended':      'suspended',
+        'card-hr-site-engineers': 'siteEngineers',
+        'card-hr-managers':       'managers'
+    };
+    Object.entries(hrCardsMap).forEach(([cardId, type]) => {
+        document.getElementById(cardId)?.addEventListener('click', () => openHrKPIModal(type));
+    });
+
+    // HR leave KPI cards
+    const hrLeaveCardsMap = {
+        'card-hr-leave-pending':  'pending',
+        'card-hr-leave-approved': 'approved',
+        'card-hr-leave-rejected': 'rejected',
+        'card-hr-leave-days':     'days'
+    };
+    Object.entries(hrLeaveCardsMap).forEach(([cardId, type]) => {
+        document.getElementById(cardId)?.addEventListener('click', () => openHrLeaveKPIModal(type));
+    });
+
+    // HR expense KPI cards
+    const hrExpCardsMap = {
+        'card-hr-exp-pending':  'pendingClaims',
+        'card-hr-exp-approved': 'approvedAmt',
+        'card-hr-exp-rejected': 'rejectedClaims',
+        'card-hr-exp-total':    'totalClaimed'
+    };
+    Object.entries(hrExpCardsMap).forEach(([cardId, type]) => {
+        document.getElementById(cardId)?.addEventListener('click', () => openHrExpenseKPIModal(type));
+    });
+
+    // Field Alerts filters
+    ['siteng-alert-pm-filter', 'siteng-alert-project-filter', 'siteng-alert-region-filter'].forEach(id => {
+        document.getElementById(id)?.addEventListener('change', () => {});
+    });
+});

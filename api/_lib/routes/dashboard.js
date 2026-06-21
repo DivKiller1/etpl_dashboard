@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { User, Site, Customer, Expense, Leave, Attendance } = require('../models');
+const { User, Site, Customer, Expense, Leave, Attendance, PaymentManagement } = require('../models');
 const mongoose = require('mongoose');
 
 const getCutoffDate = (duration) => {
@@ -87,9 +87,9 @@ router.get('/data', async (req, res) => {
         const activeCount = activeEmployees.length || 1;
 
         // 2. Aggregate Expenses
-        const expenseMatch = { 
-            customerId: { $type: "string", $regex: /^[0-9a-fA-F]{24}$/ },
-            status: 'Paid'
+        const expenseMatch = {
+            customerId: { $exists: true, $ne: null },
+            status: { $regex: '^paid$', $options: 'i' }
         };
         
         if (expRange) {
@@ -100,9 +100,12 @@ router.get('/data', async (req, res) => {
 
         const customerExpenses = await Expense.aggregate([
             { $match: expenseMatch },
-            { $addFields: { custIdObj: { $toObjectId: '$customerId' } } },
+            { $addFields: {
+                custIdObj: { $convert: { input: '$customerId', to: 'objectId', onError: null, onNull: null } },
+                siteIdObj: { $convert: { input: '$siteId',    to: 'objectId', onError: null, onNull: null } }
+            }},
             { $group: {
-                _id: { customerId: '$custIdObj', siteId: '$siteId', type: { $ifNull: ['$type', 'Other'] } },
+                _id: { customerId: '$custIdObj', siteId: '$siteIdObj', type: { $ifNull: ['$type', 'Other'] } },
                 total: { $sum: '$amount' }
             }},
             { $lookup: { from: 'customers', localField: '_id.customerId', foreignField: '_id', as: 'customer' } },
@@ -114,13 +117,7 @@ router.get('/data', async (req, res) => {
                 types: { $push: { type: '$_id.type', total: '$total' } }
             }},
             { $addFields: {
-                siteIdObj: {
-                    $cond: {
-                        if: { $regexMatch: { input: '$_id.siteId', regex: /^[0-9a-fA-F]{24}$/ } },
-                        then: { $toObjectId: '$_id.siteId' },
-                        else: null
-                    }
-                }
+                siteIdObj: '$_id.siteId'
             }},
             { $lookup: { from: 'sites', localField: 'siteIdObj', foreignField: '_id', as: 'site' } },
             { $unwind: { path: '$site', preserveNullAndEmptyArrays: true } },
@@ -385,6 +382,45 @@ router.get('/data', async (req, res) => {
             };
         });
 
+        // Build real approved leave records with employee names resolved
+        const approvedLeaves = leaves.map(l => {
+            const start = l.startDate || '';
+            const end   = l.endDate   || start;
+            const duration = (start && end)
+                ? Math.max(1, Math.ceil((new Date(end) - new Date(start)) / 86400000) + 1)
+                : 1;
+            return {
+                employeeName: userMap[l.userId?.toString()] || 'Unknown',
+                startDate: start,
+                endDate:   end,
+                duration,
+                type: l.type || 'Other'
+            };
+        }).filter(l => l.startDate);
+
+        // Build real paid expense records (individual rows, not aggregated)
+        // siteId may be stored as ObjectId or string — handle both with $cond
+        const paidExpenses = await Expense.aggregate([
+            { $match: { ...expenseMatch } },
+            { $addFields: {
+                custIdObj: { $convert: { input: '$customerId', to: 'objectId', onError: null, onNull: null } },
+                siteIdObj: { $convert: { input: '$siteId',    to: 'objectId', onError: null, onNull: null } }
+            }},
+            { $lookup: { from: 'customers', localField: 'custIdObj', foreignField: '_id', as: 'cust' } },
+            { $unwind: { path: '$cust', preserveNullAndEmptyArrays: true } },
+            { $lookup: { from: 'sites', localField: 'siteIdObj', foreignField: '_id', as: 'site' } },
+            { $unwind: { path: '$site', preserveNullAndEmptyArrays: true } },
+            { $project: {
+                _id: 0,
+                customerName: { $ifNull: ['$cust.name', 'Unknown'] },
+                customerId:   { $toString: '$custIdObj' },
+                siteName:     { $ifNull: ['$site.name', 'Office'] },
+                date:         1,
+                category:     { $ifNull: ['$type', 'Other'] },
+                amount:       1
+            }}
+        ]);
+
         res.json({
             success: true,
             data: {
@@ -393,7 +429,9 @@ router.get('/data', async (req, res) => {
                 detailedAttendance,
                 customerExpenses: finalizedCustomerExpenses,
                 dailyAttendances,
-                employees: activeEmployeesDetails
+                employees: activeEmployeesDetails,
+                approvedLeaves,
+                paidExpenses
             }
         });
     } catch (err) { 
@@ -410,6 +448,10 @@ router.get('/director-data', async (req, res) => {
         if (isNaN(todayDate)) {
             return res.status(400).json({ success: false, error: 'Invalid date format' });
         }
+
+        // Optional filters (read-only — no DB writes, just query scoping)
+        const dirStateFilter = (req.query.state      && req.query.state      !== 'all') ? req.query.state.trim()      : null;
+        const dirCustFilter  = (req.query.customerId && req.query.customerId !== 'all') ? req.query.customerId.trim() : null;
 
         const getPastDateStr = (days) => {
             const d = new Date(todayDate);
@@ -456,12 +498,17 @@ router.get('/director-data', async (req, res) => {
         };
 
         // 1. Get Active Employees, exempting Directors
-        const activeEmployees = await User.find({ 
-            isDeleted: false, 
+        let activeEmployees = await User.find({
+            isDeleted: false,
             isSuspended: false,
             roleId: { $not: { $regex: /director/i } },
             designation: { $not: { $regex: /director/i } }
         });
+        // Apply optional state filter via baseLocation
+        if (dirStateFilter) {
+            const sf = dirStateFilter.toLowerCase();
+            activeEmployees = activeEmployees.filter(e => (e.baseLocation || '').toLowerCase().includes(sf));
+        }
         const activeEmployeeIdsSet = new Set(activeEmployees.map(e => e._id.toString()));
         const totalEmployees = activeEmployees.length || 1;
 
@@ -469,11 +516,14 @@ router.get('/director-data', async (req, res) => {
         const etplCust = await Customer.findOne({ name: /etpl/i });
         const etplCustId = etplCust ? etplCust._id.toString() : null;
 
-        // 2. Fetch Sites (excluding ETPL)
+        // 2. Fetch Sites (excluding ETPL, and optional customer filter)
         const allSites = await Site.find({ isDeleted: false });
-        const sites = etplCustId 
+        let sites = etplCustId
             ? allSites.filter(s => s.customerId && s.customerId.toString() !== etplCustId)
             : allSites;
+        if (dirCustFilter) {
+            sites = sites.filter(s => s.customerId && s.customerId.toString() === dirCustFilter);
+        }
         const totalSites = sites.length;
 
         const statusBreakdown = {};
@@ -992,8 +1042,7 @@ router.get('/director-data', async (req, res) => {
                     totalEmployees: detailTotalEmployees,
                     presentToday: detailPresentToday,
                     onLeave: detailOnLeave,
-                    unmarked: detailUnmarked,
-                    totalSites: detailTotalSites,
+                    unmarked: detailUnmarked,lSites: detailTotalSites,
                     lateEmployees: detailLateEmployees,
                     sitesWithoutEngineers: detailSitesWithoutEngineers,
                     sitesAtRisk: detailSitesAtRisk,
@@ -1001,7 +1050,12 @@ router.get('/director-data', async (req, res) => {
                     deployedSiteEngineers: detailDeployedSiteEngineers,
                     idleSiteEngineers: detailIdleSiteEngineers,
                     siteEngineersOnLeave: detailSiteEngineersOnLeave
-                }
+                },
+                // Filter metadata for UI dropdowns
+                availableStates: [...new Set(
+                    allSites.map(s => s.state || '').filter(Boolean).sort()
+                )],
+                availableCustomers: customersList.map(c => ({ id: c._id.toString(), name: c.name }))
             }
         });
 
@@ -1011,7 +1065,297 @@ router.get('/director-data', async (req, res) => {
     }
 });
 
+// ── Payment Management Routes ────────────────────────────────────────────────
+
+// GET /vendor-payment-distribution
+// Aggregates paymentmanagements by requestMode → pie chart data
+router.get('/vendor-payment-distribution', async (req, res) => {
+    try {
+        const results = await PaymentManagement.aggregate([
+            { $match: { isDeleted: { $ne: true } } },
+            { $group: {
+                _id: '$requestMode',
+                count: { $sum: 1 },
+                amount: { $sum: '$requestedAmount' }
+            }}
+        ]);
+
+        let withPo    = { count: 0, amount: 0 };
+        let withoutPo = { count: 0, amount: 0 };
+
+        results.forEach(r => {
+            const id = (r._id || '').toLowerCase().replace(/\s+/g, '');
+            if (id === 'withpo')    withPo    = { count: r.count, amount: r.amount || 0 };
+            if (id === 'withoutpo') withoutPo = { count: r.count, amount: r.amount || 0 };
+        });
+
+        res.json({
+            withPo,
+            withoutPo,
+            total: {
+                count:  withPo.count  + withoutPo.count,
+                amount: withPo.amount + withoutPo.amount
+            }
+        });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// GET /operations-cost
+// Only Completed payments, joined with sites + customers
+router.get('/operations-cost', async (req, res) => {
+    try {
+        const pipeline = [
+            { $match: { isDeleted: { $ne: true }, status: { $regex: '^completed$', $options: 'i' } } },
+            // siteId is a STRING — convert to ObjectId for lookup
+            { $addFields: {
+                siteObjId: { $convert: { input: '$siteId', to: 'objectId', onError: null, onNull: null } }
+            }},
+            { $lookup: { from: 'sites',      localField: 'siteObjId',        foreignField: '_id', as: 'siteInfo' } },
+            { $unwind: { path: '$siteInfo', preserveNullAndEmptyArrays: true } },
+            { $lookup: { from: 'customers',  localField: 'siteInfo.customerId', foreignField: '_id', as: 'custInfo' } },
+            { $unwind: { path: '$custInfo', preserveNullAndEmptyArrays: true } },
+            { $group: {
+                _id: '$siteId',
+                siteName:      { $first: { $ifNull: ['$siteInfo.name',  'Unknown Site'] } },
+                project:       { $first: { $ifNull: ['$custInfo.name',  'Unknown Project'] } },
+                state:         { $first: { $ifNull: ['$siteInfo.state', ''] } },
+                totalPayments: { $sum: '$requestedAmount' },
+                count:         { $sum: 1 }
+            }},
+            { $sort: { totalPayments: -1 } },
+            { $limit: 50 }
+        ];
+
+        const data = await PaymentManagement.aggregate(pipeline);
+        res.json({ success: true, data });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// GET /payments/list — paginated, filterable payment request list
+router.get('/payments/list', async (req, res) => {
+    try {
+        const { mode, status, customerId, siteId, dateFrom, dateTo, search, page = 1, limit = 20 } = req.query;
+
+        const match = { isDeleted: { $ne: true }, status: { $regex: /^(approved|completed)$/i } };
+        if (mode && mode !== 'all') match.requestMode = { $regex: new RegExp(`^${mode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') };
+        if (customerId && customerId !== 'all') {
+            try { match.customerId = new mongoose.Types.ObjectId(customerId); } catch (_) {}
+        }
+        if (siteId && siteId !== 'all') match.siteId = siteId;
+        if (dateFrom || dateTo) {
+            match.created = {};
+            if (dateFrom) match.created.$gte = new Date(dateFrom);
+            if (dateTo)   match.created.$lte = new Date(dateTo + 'T23:59:59.999Z');
+        }
+
+        const basePipeline = [
+            { $match: match },
+            { $addFields: {
+                siteObjId: { $convert: { input: '$siteId', to: 'objectId', onError: null, onNull: null } }
+            }},
+            { $lookup: { from: 'sites',     localField: 'siteObjId',  foreignField: '_id', as: 'siteInfo' } },
+            { $unwind: { path: '$siteInfo', preserveNullAndEmptyArrays: true } },
+            { $lookup: { from: 'customers', localField: 'customerId', foreignField: '_id', as: 'custInfo' } },
+            { $unwind: { path: '$custInfo', preserveNullAndEmptyArrays: true } }
+        ];
+
+        if (search && search.trim()) {
+            basePipeline.push({ $match: { $or: [
+                { 'custInfo.name': { $regex: search.trim(), $options: 'i' } },
+                { 'siteInfo.name': { $regex: search.trim(), $options: 'i' } }
+            ]}});
+        }
+
+        const skip = (parseInt(page) - 1) * parseInt(limit);
+
+        const [countResult, records] = await Promise.all([
+            PaymentManagement.aggregate([...basePipeline, { $count: 'total' }]),
+            PaymentManagement.aggregate([
+                ...basePipeline,
+                { $sort: { created: -1 } },
+                { $skip: skip },
+                { $limit: parseInt(limit) },
+                { $project: {
+                    _id: 1,
+                    requestMode: 1, status: 1,
+                    requestedAmount: 1, created: 1,
+                    customerName: { $ifNull: ['$custInfo.name', 'Unknown'] },
+                    siteName:     { $ifNull: ['$siteInfo.name', 'Unknown'] }
+                }}
+            ])
+        ]);
+
+        const total = countResult[0]?.total || 0;
+        res.json({
+            success: true,
+            data:    records,
+            total,
+            page:    parseInt(page),
+            pages:   Math.ceil(total / parseInt(limit))
+        });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// GET /payments/filter-options — dynamic dropdown populations
+router.get('/payments/filter-options', async (req, res) => {
+    try {
+        const [customers, sites] = await Promise.all([
+            Customer.find({ isDeleted: { $ne: true } }).select('_id name').lean(),
+            Site.find({    isDeleted: { $ne: true } }).select('_id name').lean()
+        ]);
+        res.json({ success: true, customers, sites });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// GET /employee-leaves — individual approved leave records with filters
+router.get('/employee-leaves', async (req, res) => {
+    try {
+        const { month, employeeId, type, page = 1, limit = 20 } = req.query;
+
+        const users = await User.find({ isDeleted: { $ne: true } })
+            .select('_id fullName lastName name').lean();
+        const userMap = {};
+        users.forEach(u => {
+            const n = [u.fullName, u.lastName].filter(Boolean).join(' ').trim() || u.name || 'Unknown';
+            userMap[u._id.toString()] = n;
+        });
+
+        const match = { status: 'Approved' };
+        if (month && month !== 'all') {
+            const [yr, mo] = month.split('-');
+            const last = new Date(parseInt(yr), parseInt(mo), 0).getDate();
+            match.startDate = { $gte: `${yr}-${mo}-01`, $lte: `${yr}-${mo}-${String(last).padStart(2,'0')}` };
+        }
+        if (type && type !== 'all') match.type = { $regex: new RegExp(`^${type}$`, 'i') };
+        if (employeeId && employeeId !== 'all') {
+            try { match.userId = new mongoose.Types.ObjectId(employeeId); } catch (_) {}
+        }
+
+        const total  = await Leave.countDocuments(match);
+        const leaves = await Leave.find(match)
+            .sort({ startDate: -1 })
+            .skip((parseInt(page) - 1) * parseInt(limit))
+            .limit(parseInt(limit))
+            .lean();
+
+        const records = leaves.map(l => {
+            const start    = l.startDate || '';
+            const end      = l.endDate   || start;
+            const duration = (start && end)
+                ? Math.max(1, Math.ceil((new Date(end) - new Date(start)) / 86400000) + 1)
+                : 1;
+            const approverRaw = l.approvedBy || l.managerId || l.reviewedBy;
+            const approvedBy  = approverRaw ? (userMap[approverRaw.toString()] || '—') : '—';
+            return {
+                employeeName: userMap[l.userId?.toString()] || 'Unknown',
+                employeeId:   l.userId?.toString() || '',
+                type:         l.type || 'Other',
+                startDate:    start,
+                duration,
+                approvedBy
+            };
+        });
+
+        // Dropdown options
+        const allLeaveIds   = await Leave.find({ status: 'Approved' }).distinct('userId');
+        const employeeOptions = allLeaveIds
+            .filter(Boolean)
+            .map(id => ({ id: id.toString(), name: userMap[id.toString()] || '—' }))
+            .filter(e => e.name !== '—')
+            .sort((a, b) => a.name.localeCompare(b.name));
+        const types = await Leave.distinct('type', { status: 'Approved' });
+
+        res.json({ success: true, data: { records, total, employees: employeeOptions, types: types.filter(Boolean).sort() } });
+    } catch (err) {
+        console.error('[dashboard] /employee-leaves:', err.message);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// GET /payments/analysis — top 5 vendor payments by amount with user lookups
+router.get('/payments/analysis', async (req, res) => {
+    try {
+        const { mode } = req.query;
+        const match = { isDeleted: { $ne: true }, status: { $regex: /^(approved|completed)$/i } };
+        if (mode && mode !== 'all') {
+            match.requestMode = { $regex: new RegExp(`^${mode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') };
+        }
+
+        const records = await PaymentManagement.aggregate([
+            { $match: match },
+            { $addFields: {
+                siteObjId:      { $convert: { input: '$siteId',     to: 'objectId', onError: null, onNull: null } },
+                creatorObjId:   { $convert: { input: { $ifNull: ['$createdBy',   '$userId']                   }, to: 'objectId', onError: null, onNull: null } },
+                accountantObjId:{ $convert: { input: { $ifNull: ['$completedBy', { $ifNull: ['$approvedBy', '$processedBy'] }] }, to: 'objectId', onError: null, onNull: null } }
+            }},
+            { $sort: { requestedAmount: -1 } },
+            { $limit: 5 },
+            { $lookup: { from: 'sites',     localField: 'siteObjId',      foreignField: '_id', as: 'siteInfo' } },
+            { $unwind: { path: '$siteInfo',      preserveNullAndEmptyArrays: true } },
+            { $lookup: { from: 'customers', localField: 'customerId',     foreignField: '_id', as: 'custInfo' } },
+            { $unwind: { path: '$custInfo',      preserveNullAndEmptyArrays: true } },
+            { $lookup: { from: 'users',     localField: 'creatorObjId',   foreignField: '_id', as: 'creatorInfo' } },
+            { $unwind: { path: '$creatorInfo',   preserveNullAndEmptyArrays: true } },
+            { $lookup: { from: 'users',     localField: 'accountantObjId', foreignField: '_id', as: 'accountantInfo' } },
+            { $unwind: { path: '$accountantInfo', preserveNullAndEmptyArrays: true } },
+            { $project: {
+                _id: 1,
+                requestName: { $ifNull: ['$requestName', { $concat: ['REQ-', { $substr: [{ $toString: '$_id' }, 18, 6] }] }] },
+                customerName:   { $ifNull: ['$custInfo.name', 'Unknown'] },
+                siteName:       { $ifNull: ['$siteInfo.name', 'Unknown'] },
+                amount:         { $ifNull: ['$requestedAmount', 0] },
+                requestMode:    1,
+                status:         1,
+                createdByName: {
+                    $cond: {
+                        if: { $ifNull: ['$creatorInfo', false] },
+                        then: {
+                            $trim: { input: {
+                                $concat: [
+                                    { $ifNull: ['$creatorInfo.fullName', ''] },
+                                    { $cond: { if: { $ifNull: ['$creatorInfo.lastName', false] }, then: { $concat: [' ', '$creatorInfo.lastName'] }, else: '' } }
+                                ]
+                            }}
+                        },
+                        else: { $ifNull: ['$creatorInfo.name', '—'] }
+                    }
+                },
+                accountantName: {
+                    $cond: {
+                        if: { $ifNull: ['$accountantInfo', false] },
+                        then: {
+                            $trim: { input: {
+                                $concat: [
+                                    { $ifNull: ['$accountantInfo.fullName', ''] },
+                                    { $cond: { if: { $ifNull: ['$accountantInfo.lastName', false] }, then: { $concat: [' ', '$accountantInfo.lastName'] }, else: '' } }
+                                ]
+                            }}
+                        },
+                        else: { $ifNull: ['$accountantInfo.name', '—'] }
+                    }
+                }
+            }}
+        ]);
+
+        res.json({ success: true, data: records });
+    } catch (err) {
+        console.error('[dashboard] /payments/analysis:', err.message);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
 router.get('/', (req, res) => res.redirect('/api/v1/dashboard/data'));
 
 module.exports = router;
-

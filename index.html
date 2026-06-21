@@ -8,29 +8,72 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
-    
+
+    <!-- Auth guard: redirect to login if no valid token -->
+    <script>
+        (function() {
+            const token = localStorage.getItem('etpl_token');
+            if (!token) { window.location.replace('/login.html'); return; }
+            // Decode role from JWT payload (no lib needed — just base64 decode)
+            try {
+                const payload = JSON.parse(atob(token.split('.')[1]));
+                // Expired?
+                if (payload.exp && Date.now() / 1000 > payload.exp) {
+                    localStorage.removeItem('etpl_token');
+                    localStorage.removeItem('etpl_user');
+                    window.location.replace('/login.html');
+                    return;
+                }
+                window.__etplUser = { username: payload.username, role: payload.role };
+            } catch {
+                localStorage.removeItem('etpl_token');
+                window.location.replace('/login.html');
+            }
+        })();
+    </script>
+
     <!-- Pinned CDN Scripts -->
     <script src="https://cdn.jsdelivr.net/npm/exceljs@4.3.0/dist/exceljs.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/apexcharts@3.45.2/dist/apexcharts.min.js"></script>
+    <script src="https://unpkg.com/lucide@0.344.0/dist/umd/lucide.min.js"></script>
 </head>
 <body>
     <div id="app">
         <!-- Sidebar -->
         <aside class="sidebar" id="sidebar">
-            <div class="sidebar-header">
-                <div class="logo-box">E</div>
-                <span class="logo-text">ETPL</span>
+            <div class="sidebar-header" style="justify-content:space-between;">
+                <div style="display:flex;align-items:center;">
+                    <img src="/logo.jpg" alt="ETPL" class="sidebar-logo-img" style="height:36px;width:auto;object-fit:contain;">
+                </div>
+                <button class="sidebar-toggle-btn" id="sidebar-toggle-btn" title="Collapse sidebar">
+                    <i data-lucide="chevrons-left" id="sidebar-toggle-icon" style="width:16px;height:16px;"></i>
+                </button>
             </div>
             <nav class="sidebar-nav">
-                <div class="nav-category">Main Dashboard</div>
-                <a href="#" class="nav-item active" id="nav-dashboard">
-                    <i data-lucide="layout-dashboard"></i>
-                    <span>Operational Analytics</span>
-                </a>
-                <a href="#" class="nav-item" id="nav-director-dashboard">
-                    <i data-lucide="bar-chart-2"></i>
-                    <span>Director Analytics</span>
-                </a>
+                <!-- Analytics Dashboards collapsible group -->
+                <div class="nav-group" id="nav-group-analytics">
+                    <button class="nav-group-header" id="nav-group-analytics-btn" aria-expanded="true">
+                        <div style="display:flex;align-items:center;gap:10px;">
+                            <i data-lucide="layout-dashboard" style="width:16px;height:16px;flex-shrink:0;"></i>
+                            <span class="nav-group-label">Analytics Dashboards</span>
+                        </div>
+                        <i data-lucide="chevron-down" class="nav-group-chevron" id="nav-group-analytics-chevron" style="width:14px;height:14px;flex-shrink:0;transition:transform 0.2s;"></i>
+                    </button>
+                    <div class="nav-group-items" id="nav-group-analytics-items">
+                        <a href="#" class="nav-item nav-sub-item active" id="nav-director-dashboard">
+                            <i data-lucide="bar-chart-2"></i>
+                            <span>Director's Dashboard</span>
+                        </a>
+                        <a href="#" class="nav-item nav-sub-item" id="nav-siteng-dashboard">
+                            <i data-lucide="hard-hat"></i>
+                            <span>Manpower Analytics</span>
+                        </a>
+                        <a href="#" class="nav-item nav-sub-item" id="nav-hr-dashboard">
+                            <i data-lucide="users-2"></i>
+                            <span>HR Analytics</span>
+                        </a>
+                    </div>
+                </div>
             </nav>
         </aside>
 
@@ -39,7 +82,7 @@
             <!-- Header & Global Filters -->
             <header class="topbar">
                 <div class="topbar-left">
-                    <div id="breadcrumb">OPERATIONAL ANALYTICS</div>
+                    <div id="breadcrumb">DIRECTOR'S DASHBOARD</div>
                 </div>
                 <div class="topbar-right">
                     <!-- Global Filters Container -->
@@ -72,9 +115,15 @@
                         </div>
                     </div>
                     
-                    <div class="user-profile">
-                        <div class="avatar">AD</div>
-                        <i data-lucide="chevron-down" style="width: 16px;"></i>
+                    <div class="user-profile" id="user-profile-area" style="display:flex;align-items:center;gap:10px;">
+                        <div style="text-align:right;line-height:1.3;">
+                            <div id="topbar-username" style="font-size:13px;font-weight:600;color:var(--text-dark);"></div>
+                            <div id="topbar-role" style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;"></div>
+                        </div>
+                        <div class="avatar" id="topbar-avatar">--</div>
+                        <button id="logout-btn" title="Sign out" style="background:none;border:1px solid var(--border-color);border-radius:8px;padding:6px 8px;cursor:pointer;color:var(--text-muted);display:flex;align-items:center;transition:background 0.15s,color 0.15s;">
+                            <i data-lucide="log-out" style="width:15px;height:15px;"></i>
+                        </button>
                     </div>
                 </div>
             </header>
@@ -83,145 +132,328 @@
             <div class="content-wrapper" id="content">
                 <div class="dashboard-loading" id="dashboard-loading-spinner">Initializing...</div>
                 
-                <div class="dashboard-main-content hidden" id="dashboard-main-content">
-                    <!-- SECTION 1: Workforce Trends -->
-                    <div class="dashboard-section">
-                        <div class="section-header">
-                            <h2 class="section-title">Workforce Trends</h2>
-                            <div class="section-actions">
-                                <button id="export-attendance-raw-btn" class="btn btn-secondary">
-                                    <i data-lucide="download"></i> Export Raw Excel
-                                </button>
-                                <button id="export-leaves-btn" class="btn btn-secondary">
-                                    <i data-lucide="download"></i> Export Leaves Excel
-                                </button>
-                                <button id="export-attendance-formatted-btn" class="btn btn-primary">
-                                    <i data-lucide="download"></i> Formatted Export
-                                </button>
+                <!-- Hidden compatibility elements for export functions -->
+                <div style="display:none;" id="dashboard-main-content">
+                    <select id="attendance-scale-select"><option value="daily" selected>Daily</option></select>
+                    <div id="attendance-trends-chart"></div>
+                    <div id="workforce-distribution-chart"></div>
+                    <select id="dist-month-select"></select>
+                    <select id="dist-date-select"></select>
+                    <tbody id="workforce-dist-table-body"></tbody>
+                    <div id="workforce-share-chart"></div>
+                    <button id="export-attendance-raw-btn"></button>
+                    <button id="export-leaves-btn"></button>
+                    <button id="export-expenses-btn"></button>
+                    <button id="export-attendance-formatted-btn"></button>
+                </div>
+
+                <!-- ════════════════════════════════════════════════════
+                     SITE ENGINEER DASHBOARD
+                ════════════════════════════════════════════════════ -->
+                <div class="director-dashboard-content hidden" id="siteng-dashboard-view">
+                    <!-- Header -->
+                    <div class="director-header-flex">
+                        <div class="director-title-box">
+                            <h2 class="section-title">Field Manpower Operations Dashboard</h2>
+                            <p class="section-subtitle">Field deployment, manpower utilisation, and monitoring</p>
+                        </div>
+                        <div style="display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap;">
+                            <div class="filter-group">
+                                <label for="siteng-month-select">Month</label>
+                                <select id="siteng-month-select" class="filter-select">
+                                    <option value="2026-01">January 2026</option>
+                                    <option value="2026-02">February 2026</option>
+                                    <option value="2026-03">March 2026</option>
+                                    <option value="2026-04">April 2026</option>
+                                    <option value="2026-05">May 2026</option>
+                                    <option value="2026-06" selected>June 2026</option>
+                                    <option value="2026-07">July 2026</option>
+                                    <option value="2026-08">August 2026</option>
+                                    <option value="2026-09">September 2026</option>
+                                    <option value="2026-10">October 2026</option>
+                                    <option value="2026-11">November 2026</option>
+                                    <option value="2026-12">December 2026</option>
+                                </select>
+                            </div>
+                            <div class="filter-group">
+                                <label for="siteng-date-picker">As-of Date</label>
+                                <input type="date" id="siteng-date-picker" class="filter-input">
+                            </div>
+                            <button id="siteng-refresh-btn" class="btn btn-primary">
+                                <i data-lucide="refresh-cw"></i> Refresh
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Alerts Banner -->
+                    <div class="director-alerts-section">
+                        <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px;">
+                            <h3 class="section-title text-danger" style="display:flex; align-items:center; gap:8px; margin:0;">
+                                <i data-lucide="alert-triangle"></i> Field Alerts
+                            </h3>
+                            <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                                <select id="siteng-alert-pm-filter" class="filter-input" style="width:160px; font-size:12px;">
+                                    <option value="all">All Project Managers</option>
+                                </select>
+                                <select id="siteng-alert-project-filter" class="filter-input" style="width:160px; font-size:12px;">
+                                    <option value="all">All Projects</option>
+                                </select>
+                                <select id="siteng-alert-region-filter" class="filter-input" style="width:140px; font-size:12px;">
+                                    <option value="all">All Regions</option>
+                                </select>
                             </div>
                         </div>
-                        
-                        <div class="charts-grid-two">
-                            <!-- Chart 1: Attendance & Leave Trends -->
-                            <div class="chart-card">
-                                <div class="card-header-flex">
-                                    <h4>Attendance & Leave Trends</h4>
-                                    <select id="attendance-scale-select" class="card-header-select">
-                                        <option value="daily" selected>Daily</option>
-                                        <option value="weekly">Weekly</option>
-                                        <option value="monthly">Monthly</option>
-                                    </select>
-                                </div>
-                                <div class="chart-scroll-wrapper">
-                                    <div id="attendance-trends-chart"></div>
+                        <div class="alerts-grid" id="siteng-alerts-container" style="margin-top:10px;">
+                            <!-- Loaded dynamically -->
+                        </div>
+                    </div>
+
+                    <!-- Section 1: Field KPI Cards -->
+                    <div class="director-section">
+                        <div class="section-header">
+                            <h3 class="section-title">Field KPIs</h3>
+                        </div>
+                        <div class="kpis-grid-four">
+                            <div class="kpi-card glassmorphic" id="card-se-target-sites" style="cursor:pointer;">
+                                <div class="kpi-icon bg-primary-light"><i data-lucide="flag"></i></div>
+                                <div class="kpi-data">
+                                    <span class="kpi-value" id="siteng-kpi-target-sites">-</span>
+                                    <span class="kpi-label">Month's Target (Sites)</span>
                                 </div>
                             </div>
-                            
-                            <!-- Chart 2: Leave Distribution -->
+                            <div class="kpi-card glassmorphic" id="card-se-done-sites" style="cursor:pointer;">
+                                <div class="kpi-icon bg-primary-light"><i data-lucide="check-circle"></i></div>
+                                <div class="kpi-data">
+                                    <span class="kpi-value" id="siteng-kpi-done-sites">-</span>
+                                    <span class="kpi-label">Completed Sites</span>
+                                </div>
+                            </div>
+                            <div class="kpi-card glassmorphic" id="card-se-visibility-sites" style="cursor:pointer;">
+                                <div class="kpi-icon bg-primary-light"><i data-lucide="eye"></i></div>
+                                <div class="kpi-data">
+                                    <span class="kpi-value" id="siteng-kpi-visibility-sites">-</span>
+                                    <span class="kpi-label">Active / Visibility Sites</span>
+                                </div>
+                            </div>
+                            <div class="kpi-card glassmorphic" id="card-se-achieved-pct">
+                                <div class="kpi-icon bg-primary-light"><i data-lucide="percent"></i></div>
+                                <div class="kpi-data">
+                                    <span class="kpi-value" id="siteng-kpi-achieved-pct">-</span>
+                                    <span class="kpi-label">Achievement %</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="kpis-grid-four" style="margin-top:10px;">
+                            <div class="kpi-card glassmorphic" id="card-se-deployed" style="cursor:pointer;">
+                                <div class="kpi-icon bg-primary-light"><i data-lucide="activity"></i></div>
+                                <div class="kpi-data">
+                                    <span class="kpi-value" id="siteng-kpi-deployed">-</span>
+                                    <span class="kpi-label">Deployed Today</span>
+                                </div>
+                            </div>
+                            <div class="kpi-card glassmorphic" id="card-se-ratio-diff">
+                                <div class="kpi-icon bg-primary-light"><i data-lucide="trending-up"></i></div>
+                                <div class="kpi-data">
+                                    <span class="kpi-value" id="siteng-kpi-ratio-diff">-</span>
+                                    <span class="kpi-label">MoM Deployment Δ %</span>
+                                </div>
+                            </div>
+                            <div class="kpi-card glassmorphic" id="card-se-lwp-count" style="cursor:pointer;">
+                                <div class="kpi-icon bg-primary-light"><i data-lucide="calendar-minus"></i></div>
+                                <div class="kpi-data">
+                                    <span class="kpi-value" id="siteng-kpi-lwp-count">-</span>
+                                    <span class="kpi-label">LWP Days (Month)</span>
+                                </div>
+                            </div>
+                            <!-- Hidden element for JS compat -->
+                            <div style="display:none;"><span id="siteng-kpi-total-ff">-</span></div>
+                        </div>
+                    </div>
+
+                    <!-- Section 2: Manpower Status Today + Manpower Trend -->
+                    <div class="director-section">
+                        <div class="charts-grid-two" style="grid-template-columns: 1fr 2fr;">
+                            <!-- Status Table -->
                             <div class="chart-card">
-                                <h4>Leave Distribution</h4>
-                                <div id="leave-distribution-chart"></div>
+                                <h4>Manpower Status Today</h4>
+                                <table class="status-table-simple" id="siteng-status-table">
+                                    <tbody id="siteng-status-table-tbody">
+                                        <tr><td colspan="2" style="text-align:center;color:var(--text-muted);padding:24px;">Loading…</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            <!-- 30-day Trend Line -->
+                            <div class="chart-card">
+                                <h4>Manpower Trend (Last 30 Days)</h4>
+                                <div id="siteng-manpower-trend-chart"></div>
                             </div>
                         </div>
                     </div>
 
-                    <!-- SECTION 2: Expense Analytics -->
-                    <div class="dashboard-section">
-                        <div class="section-header">
-                            <h2 class="section-title">Expense Analytics</h2>
-                            <div class="section-actions">
-                                <button id="export-expenses-btn" class="btn btn-primary">
-                                    <i data-lucide="download"></i> Export Expenses
-                                </button>
-                            </div>
-                        </div>
-                        
-                        <!-- Chart 3: Overall Customer Expenses -->
-                        <div class="chart-card" style="margin-bottom: 24px;">
-                            <h4>Overall Customer Expenses</h4>
-                            <div class="chart-scroll-wrapper">
-                                <div id="customer-expenses-chart"></div>
-                            </div>
-                        </div>
-                        
+                    <!-- Section 3: Project-wise Progress + Project Health -->
+                    <div class="director-section">
                         <div class="charts-grid-two">
-                            <!-- Chart 4A: Customer-Site Breakdown -->
                             <div class="chart-card">
-                                <div class="card-header-flex">
-                                    <h4>Customer-Site Breakdown</h4>
-                                    <select id="customer-select" class="card-header-select"></select>
-                                </div>
-                                <div id="customer-site-chart"></div>
+                                <h4>Project-wise Progress</h4>
+                                <div id="siteng-project-progress-chart"></div>
                             </div>
-                            
-                            <!-- Chart 4B: Customer Expense Types -->
                             <div class="chart-card">
-                                <h4>Customer Expense Types</h4>
-                                <div id="expense-types-chart"></div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- SECTION 3: Workforce Location Distribution -->
-                    <div class="dashboard-section" style="margin-top: 35px;">
-                        <div class="section-header">
-                            <h2 class="section-title">Workforce Location Distribution</h2>
-                        </div>
-                        
-                        <!-- Line Chart Card -->
-                        <div class="chart-card" style="margin-bottom: 24px;">
-                            <div class="card-header-flex" style="flex-wrap: wrap; gap: 8px;">
-                                <h4>Workforce Distribution Trend</h4>
-                                <div style="display: flex; gap: 8px;">
-                                    <select id="dist-month-select" class="card-header-select"></select>
-                                    <select id="dist-date-select" class="card-header-select"></select>
-                                </div>
-                            </div>
-                            <div style="width: 100%; overflow: hidden; position: relative;">
-                                <div id="workforce-distribution-chart"></div>
-                            </div>
-                        </div>
-
-                        <!-- Details & Share Grid -->
-                        <div class="charts-grid-two">
-                            <!-- Site Wise Details Table -->
-                            <div class="chart-card">
-                                <h4>Workforce Site Details</h4>
+                                <h4>Project Health</h4>
                                 <div class="table-scroll-wrapper" style="max-height: 350px;">
                                     <table class="modal-table">
                                         <thead>
                                             <tr>
-                                                <th>Site/Location</th>
-                                                <th style="text-align: center;">Present</th>
+                                                <th>Project / Customer</th>
+                                                <th style="text-align:center;">Target</th>
+                                                <th style="text-align:center;">Done</th>
+                                                <th style="text-align:center;">Pending</th>
+                                                <th style="text-align:center;">Status</th>
                                             </tr>
                                         </thead>
-                                        <tbody id="workforce-dist-table-body">
-                                            <!-- Dynamically loaded on dropdown changes -->
-                                        </tbody>
+                                        <tbody id="siteng-project-health-tbody"></tbody>
                                     </table>
                                 </div>
                             </div>
+                        </div>
+                    </div>
 
-                            <!-- Location Share Donut Chart -->
+                    <!-- Section 4: PM Performance + Sites-Manpower Summary -->
+                    <div class="director-section">
+                        <div class="charts-grid-two">
                             <div class="chart-card">
-                                <h4>Workforce Location Share</h4>
-                                <div id="workforce-share-chart"></div>
+                                <h4>PM Performance</h4>
+                                <div class="table-scroll-wrapper" style="max-height: 350px;">
+                                    <table class="modal-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Project Manager</th>
+                                                <th style="text-align:center;">Team Size</th>
+                                                <th style="text-align:center;">Deployed</th>
+                                                <th style="text-align:center;">Utilization %</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="siteng-pm-perf-tbody"></tbody>
+                                    </table>
+                                </div>
+                            </div>
+                            <div class="chart-card">
+                                <h4>Sites &amp; Manpower Summary</h4>
+                                <div class="kpis-grid-two" id="siteng-manpower-summary-grid" style="margin-top: 8px;">
+                                    <!-- Loaded dynamically -->
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Section 5: Manpower Activity Status + Idle Engineers Top-5 -->
+                    <div class="director-section">
+                        <div class="section-header">
+                            <h3 class="section-title">Manpower Activity Status (Today)</h3>
+                        </div>
+                        <!-- 6-card activity status grid using real engineer-status-today data -->
+                        <div class="kpis-grid-six" style="margin-bottom:12px;">
+                            <div class="kpi-card glassmorphic" id="card-se-act-onsite" style="cursor:pointer;">
+                                <div class="kpi-icon bg-primary-light"><i data-lucide="map-pin"></i></div>
+                                <div class="kpi-data">
+                                    <span class="kpi-value" id="siteng-act-onsite">-</span>
+                                    <span class="kpi-label">On Site</span>
+                                </div>
+                            </div>
+                            <div class="kpi-card glassmorphic" id="card-se-act-travelling" style="cursor:pointer;">
+                                <div class="kpi-icon bg-primary-light"><i data-lucide="car"></i></div>
+                                <div class="kpi-data">
+                                    <span class="kpi-value" id="siteng-act-travelling">-</span>
+                                    <span class="kpi-label">Travelling</span>
+                                </div>
+                            </div>
+                            <div class="kpi-card glassmorphic" id="card-se-act-atoffice" style="cursor:pointer;">
+                                <div class="kpi-icon bg-primary-light"><i data-lucide="building-2"></i></div>
+                                <div class="kpi-data">
+                                    <span class="kpi-value" id="siteng-act-atoffice">-</span>
+                                    <span class="kpi-label">At Office</span>
+                                </div>
+                            </div>
+                            <div class="kpi-card glassmorphic" id="card-se-act-onleave" style="cursor:pointer;">
+                                <div class="kpi-icon bg-primary-light"><i data-lucide="calendar-off"></i></div>
+                                <div class="kpi-data">
+                                    <span class="kpi-value" id="siteng-act-onleave">-</span>
+                                    <span class="kpi-label">On Leave</span>
+                                </div>
+                            </div>
+                            <div class="kpi-card glassmorphic" id="card-se-act-lwp" style="cursor:pointer;">
+                                <div class="kpi-icon bg-primary-light"><i data-lucide="minus-circle"></i></div>
+                                <div class="kpi-data">
+                                    <span class="kpi-value" id="siteng-act-lwp">-</span>
+                                    <span class="kpi-label">On LWP</span>
+                                </div>
+                            </div>
+                            <div class="kpi-card glassmorphic" id="card-se-act-idle" style="cursor:pointer;">
+                                <div class="kpi-icon bg-primary-light"><i data-lucide="zap-off"></i></div>
+                                <div class="kpi-data">
+                                    <span class="kpi-value" id="siteng-act-idle">-</span>
+                                    <span class="kpi-label">Idle</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Idle Engineers Top-5 -->
+                        <div class="chart-card">
+                            <div class="card-header-flex">
+                                <h4>Top Idle Engineers (&gt;5 days)</h4>
+                                <button id="siteng-view-all-idle-btn" class="btn btn-secondary btn-sm">View All</button>
+                            </div>
+                            <div class="table-scroll-wrapper" style="max-height:240px;">
+                                <table class="modal-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Name</th>
+                                            <th>Last Project</th>
+                                            <th>Last Location</th>
+                                            <th style="text-align:center;">Idle Days</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="siteng-idle-top5-tbody"></tbody>
+                                </table>
+                            </div>
+                        </div>
+                        <!-- Hidden elements for JS compatibility -->
+                        <div style="display:none;">
+                            <span id="siteng-kpi-lwp-days">-</span>
+                            <span id="siteng-kpi-idle-days">-</span>
+                            <span id="siteng-kpi-ev-count">-</span>
+                            <span id="siteng-kpi-left-count">-</span>
                         </div>
                     </div>
                 </div>
-            </div>
 
                 <!-- Director Dashboard Content -->
                 <div class="director-dashboard-content hidden" id="director-dashboard-view">
                     <!-- Director Header / Date Selector -->
                     <div class="director-header-flex">
                         <div class="director-title-box">
-                            <h2 class="section-title">Director Operations Dashboard</h2>
+                            <h2 class="section-title">Director's Dashboard</h2>
                             <p class="section-subtitle">Real-time workforce deployment, project metrics, and operational alerts</p>
                         </div>
-                        <div class="director-date-selector">
-                            <label for="director-date-picker">Target Date</label>
-                            <input type="date" id="director-date-picker" class="filter-input" value="2026-06-04">
+                        <div style="display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap;">
+                            <div class="director-date-selector">
+                                <label for="director-date-picker">Target Date</label>
+                                <input type="date" id="director-date-picker" class="filter-input" value="2026-06-04">
+                            </div>
+                            <div class="filter-group">
+                                <label for="director-state-filter">Region / State</label>
+                                <select id="director-state-filter" class="filter-select">
+                                    <option value="all">All States</option>
+                                </select>
+                            </div>
+                            <div class="filter-group">
+                                <label for="director-customer-filter">Project / Client</label>
+                                <select id="director-customer-filter" class="filter-select">
+                                    <option value="all">All Projects</option>
+                                </select>
+                            </div>
+                            <button id="director-refresh-btn" class="btn btn-primary" style="white-space:nowrap;">
+                                <i data-lucide="refresh-cw"></i> Refresh
+                            </button>
                         </div>
                     </div>
 
@@ -239,207 +471,113 @@
 
                     <!-- Section: Key Performance Indicators -->
                     <div class="director-section">
-                        <div class="section-header">
-                            <h3 class="section-title">Operational KPIs</h3>
-                        </div>
-                        <div class="kpis-grid-four">
-                            <!-- Workforce Cards -->
-                            <div class="kpi-card glassmorphic" id="card-dir-total-employees" style="cursor: pointer;">
-                                <div class="kpi-icon bg-primary-light"><i data-lucide="users"></i></div>
+                        <p class="kpi-group-label">Employee Metrics</p>
+                        <div class="kpis-grid-six">
+                            <div class="kpi-card glassmorphic" id="card-dir-total-employees" style="cursor:pointer;">
+                                <div class="kpi-icon"><i data-lucide="users"></i></div>
                                 <div class="kpi-data">
                                     <span class="kpi-value" id="dir-kpi-total-employees">-</span>
                                     <span class="kpi-label">Total Employees</span>
                                 </div>
                             </div>
-                            <div class="kpi-card glassmorphic" id="card-dir-present" style="cursor: pointer;">
-                                <div class="kpi-icon bg-success-light"><i data-lucide="user-check"></i></div>
+                            <div class="kpi-card glassmorphic" id="card-dir-present" style="cursor:pointer;">
+                                <div class="kpi-icon"><i data-lucide="user-check"></i></div>
                                 <div class="kpi-data">
-                                    <span class="kpi-value text-success" id="dir-kpi-present">-</span>
+                                    <span class="kpi-value" id="dir-kpi-present">-</span>
                                     <span class="kpi-label">Present Today</span>
                                 </div>
                             </div>
-                            <div class="kpi-card glassmorphic" id="card-dir-on-leave" style="cursor: pointer;">
-                                <div class="kpi-icon bg-warning-light"><i data-lucide="calendar"></i></div>
+                            <div class="kpi-card glassmorphic" id="card-dir-on-leave" style="cursor:pointer;">
+                                <div class="kpi-icon"><i data-lucide="calendar"></i></div>
                                 <div class="kpi-data">
-                                    <span class="kpi-value text-warning" id="dir-kpi-on-leave">-</span>
+                                    <span class="kpi-value" id="dir-kpi-on-leave">-</span>
                                     <span class="kpi-label">On Leave</span>
                                 </div>
                             </div>
-                            <div class="kpi-card glassmorphic" id="card-dir-unmarked" style="cursor: pointer;">
-                                <div class="kpi-icon bg-danger-light"><i data-lucide="user-x"></i></div>
+                            <div class="kpi-card glassmorphic" id="card-dir-unmarked" style="cursor:pointer;">
+                                <div class="kpi-icon"><i data-lucide="user-x"></i></div>
                                 <div class="kpi-data">
-                                    <span class="kpi-value text-danger" id="dir-kpi-unmarked">-</span>
-                                    <span class="kpi-label">Attendance Not Marked / Idle</span>
+                                    <span class="kpi-value" id="dir-kpi-unmarked">-</span>
+                                    <span class="kpi-label">Unmarked / Idle</span>
                                 </div>
                             </div>
-                        </div>
-
-                        <div class="kpis-grid-four" style="margin-top: 16px;">
-                            <!-- Site Cards -->
-                            <div class="kpi-card glassmorphic" id="card-dir-total-sites" style="cursor: pointer;">
-                                <div class="kpi-icon bg-info-light"><i data-lucide="map-pin"></i></div>
-                                <div class="kpi-data">
-                                    <span class="kpi-value" id="dir-kpi-total-sites">-</span>
-                                    <span class="kpi-label">Total Sites</span>
-                                </div>
-                            </div>
-                            <div class="kpi-card glassmorphic" id="card-dir-late-employees" style="cursor: pointer;">
-                                <div class="kpi-icon bg-purple-light"><i data-lucide="clock"></i></div>
+                            <div class="kpi-card glassmorphic" id="card-dir-late-employees" style="cursor:pointer;">
+                                <div class="kpi-icon"><i data-lucide="clock"></i></div>
                                 <div class="kpi-data">
                                     <span class="kpi-value" id="dir-kpi-late-employees">-</span>
                                     <span class="kpi-label">Late Arrivals</span>
                                 </div>
                             </div>
-                            <div class="kpi-card glassmorphic" id="card-dir-sites-no-engineer" style="cursor: pointer;">
-                                <div class="kpi-icon bg-orange-light"><i data-lucide="alert-circle"></i></div>
+                            <div class="kpi-card glassmorphic" id="card-dir-total-engineers" style="cursor:pointer;">
+                                <div class="kpi-icon"><i data-lucide="hard-hat"></i></div>
                                 <div class="kpi-data">
-                                    <span class="kpi-value text-danger" id="dir-kpi-sites-no-engineer">-</span>
-                                    <span class="kpi-label">Sites Without Engineer (30d)</span>
-                                </div>
-                            </div>
-                            <div class="kpi-card glassmorphic" id="card-dir-sites-at-risk" style="cursor: pointer;">
-                                <div class="kpi-icon bg-teal-light"><i data-lucide="shield-alert"></i></div>
-                                <div class="kpi-data">
-                                    <span class="kpi-value text-danger" id="dir-kpi-sites-at-risk">-</span>
-                                    <span class="kpi-label">Sites At Risk (7d gap)</span>
+                                    <span class="kpi-value" id="dir-kpi-total-engineers">-</span>
+                                    <span class="kpi-label">Site Engineers</span>
                                 </div>
                             </div>
                         </div>
-
-                        <div class="kpis-grid-four" style="margin-top: 16px;">
-                            <!-- Engineers Specific -->
-                            <div class="kpi-card glassmorphic" id="card-dir-total-engineers" style="cursor: pointer;">
-                                <div class="kpi-icon bg-blue-light"><i data-lucide="cpu"></i></div>
+                        <p class="kpi-group-label" style="margin-top:10px;">Manpower &amp; Sites</p>
+                        <div class="kpis-grid-five">
+                            <div class="kpi-card glassmorphic" id="card-dir-deployed-engineers" style="cursor:pointer;">
+                                <div class="kpi-icon"><i data-lucide="activity"></i></div>
                                 <div class="kpi-data">
-                                    <span class="kpi-value" id="dir-kpi-total-engineers">-</span>
-                                    <span class="kpi-label">Total Site Engineers</span>
-                                </div>
-                            </div>
-                            <div class="kpi-card glassmorphic" id="card-dir-deployed-engineers" style="cursor: pointer;">
-                                <div class="kpi-icon bg-green-light"><i data-lucide="activity"></i></div>
-                                <div class="kpi-data">
-                                    <span class="kpi-value text-success" id="dir-kpi-deployed-engineers">-</span>
+                                    <span class="kpi-value" id="dir-kpi-deployed-engineers">-</span>
                                     <span class="kpi-label">Deployed Engineers</span>
                                 </div>
                             </div>
-                            <div class="kpi-card glassmorphic" id="card-dir-idle-engineers" style="cursor: pointer;">
-                                <div class="kpi-icon bg-red-light"><i data-lucide="zap-off"></i></div>
+                            <div class="kpi-card glassmorphic" id="card-dir-idle-engineers" style="cursor:pointer;">
+                                <div class="kpi-icon"><i data-lucide="zap-off"></i></div>
                                 <div class="kpi-data">
-                                    <span class="kpi-value text-danger" id="dir-kpi-idle-engineers">-</span>
+                                    <span class="kpi-value" id="dir-kpi-idle-engineers">-</span>
                                     <span class="kpi-label">Idle Engineers</span>
                                 </div>
                             </div>
-                            <div class="kpi-card glassmorphic" id="card-dir-engineers-leave" style="cursor: pointer;">
-                                <div class="kpi-icon bg-yellow-light"><i data-lucide="plane"></i></div>
+                            <div class="kpi-card glassmorphic" id="card-dir-engineers-leave" style="cursor:pointer;">
+                                <div class="kpi-icon"><i data-lucide="plane"></i></div>
                                 <div class="kpi-data">
-                                    <span class="kpi-value text-warning" id="dir-kpi-engineers-leave">-</span>
-                                    <span class="kpi-label">Engineers On Leave / LWP</span>
+                                    <span class="kpi-value" id="dir-kpi-engineers-leave">-</span>
+                                    <span class="kpi-label">Engg. On Leave/LWP</span>
                                 </div>
                             </div>
+                            <div class="kpi-card glassmorphic" id="card-dir-total-sites" style="cursor:pointer;">
+                                <div class="kpi-icon"><i data-lucide="map-pin"></i></div>
+                                <div class="kpi-data">
+                                    <span class="kpi-value" id="dir-kpi-total-sites">-</span>
+                                    <span class="kpi-label">Total Sites</span>
+                                </div>
+                            </div>
+                            <div class="kpi-card glassmorphic" id="card-dir-sites-no-engineer" style="cursor:pointer;">
+                                <div class="kpi-icon"><i data-lucide="alert-circle"></i></div>
+                                <div class="kpi-data">
+                                    <span class="kpi-value" id="dir-kpi-sites-no-engineer">-</span>
+                                    <span class="kpi-label">Sites w/o Engineer</span>
+                                </div>
+                            </div>
+                            <span id="dir-kpi-sites-at-risk" style="display:none;"></span>
                         </div>
                     </div>
 
-                    <!-- Google Map Section -->
-                    <div class="director-section">
-                        <div class="chart-card">
-                            <h4>Live Site Engineers Map (India)</h4>
-                            <div id="director-map" style="width: 100%; height: 450px; border-radius: 8px; border: 1px solid var(--border-color); background-color: #f3f4f6; margin-top: 15px;"></div>
-                            <!-- Map Legend Key for Projects -->
-                            <div class="map-legend" style="margin-top: 16px; padding: 12px 16px; background-color: #ffffff; border: 1px solid var(--border-color); border-radius: 8px; display: flex; flex-wrap: wrap; gap: 20px; align-items: center; justify-content: center; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
-                                <span style="font-size: 12px; font-weight: 700; color: #475569; text-transform: uppercase; letter-spacing: 0.5px;">Map Key:</span>
-                                <div style="display: flex; flex-wrap: wrap; gap: 16px; align-items: center;">
-                                    <div class="legend-item" style="display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: #334155;">
-                                        <span style="display: inline-block; width: 12px; height: 12px; border-radius: 50%; background-color: #dc2626; border: 2px solid #ffffff; box-shadow: 0 0 0 1px #dc2626;"></span>
-                                        Hero MotoCorp Ltd
-                                    </div>
-                                    <div class="legend-item" style="display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: #334155;">
-                                        <span style="display: inline-block; width: 12px; height: 12px; border-radius: 50%; background-color: #2563eb; border: 2px solid #ffffff; box-shadow: 0 0 0 1px #2563eb;"></span>
-                                        RELIANCE BP MOBILITY
-                                    </div>
-                                    <div class="legend-item" style="display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: #334155;">
-                                        <span style="display: inline-block; width: 12px; height: 12px; border-radius: 50%; background-color: #10b981; border: 2px solid #ffffff; box-shadow: 0 0 0 1px #10b981;"></span>
-                                        V-Green HPCL
-                                    </div>
-                                    <div class="legend-item" style="display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: #334155;">
-                                        <span style="display: inline-block; width: 12px; height: 12px; border-radius: 50%; background-color: #06b6d4; border: 2px solid #ffffff; box-shadow: 0 0 0 1px #06b6d4;"></span>
-                                        V-Green B2C
-                                    </div>
-                                    <div class="legend-item" style="display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: #334155;">
-                                        <span style="display: inline-block; width: 12px; height: 12px; border-radius: 50%; background-color: #6b7280; border: 2px solid #ffffff; box-shadow: 0 0 0 1px #6b7280;"></span>
-                                        Other / Office
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Charts Grid -->
+                    <!-- Map + Idle Engineers side by side -->
                     <div class="director-section">
                         <div class="charts-grid-two">
-                            <div class="chart-card">
-                                <h4>Attendance & Leave Trends (Last 30 Days)</h4>
-                                <div id="dir-attendance-trends-chart"></div>
-                            </div>
-                            <div class="chart-card">
-                                <h4>Workforce Distribution Share</h4>
-                                <div id="dir-workforce-share-chart"></div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Details Lists & PM Performance Grid -->
-                    <div class="director-section">
-                        <div class="charts-grid-two">
-                            <!-- Project Manager Performance Table -->
-                            <div class="chart-card">
-                                <h4>Project Manager Team Utilization</h4>
-                                <div class="table-scroll-wrapper" style="max-height: 350px;">
-                                    <table class="modal-table">
-                                        <thead>
-                                            <tr>
-                                                <th>Project Manager</th>
-                                                <th style="text-align: center;">Team Size</th>
-                                                <th style="text-align: center;">Deployed Today</th>
-                                                <th style="text-align: center;">Utilization %</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody id="dir-pm-performance-table-body">
-                                            <!-- Loaded dynamically -->
-                                        </tbody>
-                                    </table>
+                            <!-- Live Map -->
+                            <div class="chart-card" style="padding:0; overflow:hidden;">
+                                <div style="padding:10px 16px 8px; border-bottom:1px solid var(--border-color);">
+                                    <h4 style="margin:0;">Live Manpower Map — India</h4>
+                                </div>
+                                <div id="director-map" style="width:100%; height:300px; background-color:#f1f5f9;"></div>
+                                <div class="map-legend-bar">
+                                    <div class="map-legend-item"><span class="map-legend-dot" style="background:#dc2626;"></span>Hero</div>
+                                    <div class="map-legend-item"><span class="map-legend-dot" style="background:#2563eb;"></span>Reliance BP</div>
+                                    <div class="map-legend-item"><span class="map-legend-dot" style="background:#10b981;"></span>V-Green HPCL</div>
+                                    <div class="map-legend-item"><span class="map-legend-dot" style="background:#06b6d4;"></span>V-Green B2C</div>
+                                    <div class="map-legend-item"><span class="map-legend-dot" style="background:#6b7280;"></span>Other</div>
                                 </div>
                             </div>
-
-                            <!-- Project Health Table -->
-                            <div class="chart-card">
-                                <h4>Project Status & Achievement</h4>
-                                <div class="table-scroll-wrapper" style="max-height: 350px;">
-                                    <table class="modal-table">
-                                        <thead>
-                                            <tr>
-                                                <th>Project / Customer</th>
-                                                <th style="text-align: center;">Total Sites</th>
-                                                <th style="text-align: center;">Completed</th>
-                                                <th style="text-align: center;">Pending</th>
-                                                <th style="text-align: center;">Achievement %</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody id="dir-project-health-table-body">
-                                            <!-- Loaded dynamically -->
-                                        </tbody>
-                                    </table>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Bottom Details Grid: Idle Manpower & Sites At Risk lists -->
-                    <div class="director-section" style="margin-top: 24px;">
-                        <div class="charts-grid-two">
-                            <!-- Idle Engineers List -->
+                            <!-- Idle Engineers table -->
                             <div class="chart-card">
                                 <div class="card-header-flex">
-                                    <h4>Idle Engineers (No Attendance > 5 Days)</h4>
+                                    <h4>Idle Engineers (No Attendance &gt; 5 Days)</h4>
                                     <button id="dir-export-idle-btn" class="btn btn-secondary btn-sm">
                                         <i data-lucide="download"></i> Export
                                     </button>
@@ -454,42 +592,556 @@
                                                 <th>Manager</th>
                                             </tr>
                                         </thead>
-                                        <tbody id="dir-idle-engineers-table-body">
-                                            <!-- Loaded dynamically -->
-                                        </tbody>
+                                        <tbody id="dir-idle-engineers-table-body"></tbody>
                                     </table>
                                 </div>
                             </div>
+                        </div>
+                        <!-- Hidden stat elements (kept for JS compatibility) -->
+                        <div style="display:none;">
+                            <p id="map-stat-deployed">-</p>
+                            <p id="map-stat-idle">-</p>
+                            <p id="map-stat-onleave">-</p>
+                        </div>
+                    </div>
 
-                            <!-- Sites At Risk List -->
+                    <!-- Employee Distribution: Leave Distribution + Workforce Share -->
+                    <div class="director-section">
+                        <div class="section-header">
+                            <h3 class="section-title">Employee Distribution</h3>
+                        </div>
+                        <div class="charts-grid-two">
+                            <div class="chart-card">
+                                <h4>Employee Leave Distribution</h4>
+                                <div id="leave-distribution-chart" style="height:220px;"></div>
+                            </div>
+                            <div class="chart-card">
+                                <h4>Workforce Distribution Share</h4>
+                                <div id="dir-workforce-share-chart" style="height:220px;"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Employee Expense Analytics -->
+                    <div class="director-section">
+                        <div class="section-header">
+                            <h3 class="section-title">Employee Expense Analytics</h3>
+                            <div class="section-actions">
+                                <button id="export-expenses-btn-dir" class="btn btn-secondary">
+                                    <i data-lucide="download"></i> Export Expenses
+                                </button>
+                            </div>
+                        </div>
+                        <div class="charts-grid-two" style="margin-bottom:12px;">
+                            <div class="chart-card">
+                                <h4>Overall Customer Expenses</h4>
+                                <div id="customer-expenses-chart"></div>
+                            </div>
+                            <div class="chart-card">
+                                <h4>Vendor Payment Distribution</h4>
+                                <div id="dir-vendor-payment-chart"></div>
+                                <p id="dir-vendor-payment-empty" style="display:none; text-align:center; color:var(--text-muted); padding: 24px 0; font-size:13px;">No payment data available</p>
+                            </div>
+                        </div>
+                        <div class="charts-grid-two">
                             <div class="chart-card">
                                 <div class="card-header-flex">
-                                    <h4>Sites At Risk (No Attendance > 7 Days)</h4>
-                                    <button id="dir-export-sites-risk-btn" class="btn btn-secondary btn-sm">
-                                        <i data-lucide="download"></i> Export
-                                    </button>
+                                    <h4>Employee Customer-site Expense Breakdown</h4>
+                                    <select id="customer-select" class="card-header-select"></select>
                                 </div>
-                                <div class="table-scroll-wrapper" style="max-height: 300px;">
+                                <div id="customer-site-chart"></div>
+                            </div>
+                            <div class="chart-card">
+                                <h4>Employee Customer-Expense Types</h4>
+                                <div id="expense-types-chart"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Employee-wise Leave Table -->
+                    <div class="director-section">
+                        <div class="section-header">
+                            <h3 class="section-title">Employee Leaves</h3>
+                            <div class="section-actions">
+                                <select id="dir-leave-month-filter" class="filter-input" style="width:140px;">
+                                    <option value="all">All Months</option>
+                                </select>
+                                <select id="dir-leave-emp-filter" class="filter-input" style="width:190px;">
+                                    <option value="all">All Employees</option>
+                                </select>
+                                <select id="dir-leave-type-filter" class="filter-input" style="width:120px;">
+                                    <option value="all">All Types</option>
+                                </select>
+                                <button id="dir-leave-export-btn" class="btn btn-secondary">
+                                    <i data-lucide="download"></i> Export
+                                </button>
+                            </div>
+                        </div>
+                        <div class="chart-card">
+                            <div class="table-scroll-wrapper" style="max-height:360px;">
+                                <table class="modal-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Employee</th>
+                                            <th>Type</th>
+                                            <th>Start Date</th>
+                                            <th style="text-align:center;">Duration (days)</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="dir-leave-table-tbody">
+                                        <tr><td colspan="4" style="text-align:center;color:var(--text-muted);padding:32px;">Loading…</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div style="display:flex;justify-content:center;align-items:center;gap:16px;margin-top:14px;padding-top:14px;border-top:1px solid var(--border-color);">
+                                <button id="dir-leave-prev-btn" class="btn btn-secondary btn-sm">&#8249; Prev</button>
+                                <span id="dir-leave-page-info" style="font-size:13px;color:var(--text-muted);">Page 1</span>
+                                <button id="dir-leave-next-btn" class="btn btn-secondary btn-sm">Next &#8250;</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Details Lists & PM Performance Grid -->
+                    <div class="director-section">
+                        <div class="charts-grid-two">
+                            <div class="chart-card">
+                                <h4>Project Manager Team Utilization</h4>
+                                <div class="table-scroll-wrapper" style="max-height: 350px;">
                                     <table class="modal-table">
                                         <thead>
                                             <tr>
-                                                <th>Site ID</th>
-                                                <th>Site Name</th>
-                                                <th>Project</th>
-                                                <th>State / District</th>
+                                                <th>Project Manager</th>
+                                                <th style="text-align: center;">Team Size</th>
+                                                <th style="text-align: center;">Deployed Today</th>
+                                                <th style="text-align: center;">Utilization %</th>
                                             </tr>
                                         </thead>
-                                        <tbody id="dir-sites-risk-table-body">
-                                            <!-- Loaded dynamically -->
-                                        </tbody>
+                                        <tbody id="dir-pm-performance-table-body"></tbody>
+                                    </table>
+                                </div>
+                            </div>
+                            <div class="chart-card">
+                                <h4>Project Status &amp; Achievement</h4>
+                                <div class="table-scroll-wrapper" style="max-height: 350px;">
+                                    <table class="modal-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Project / Customer</th>
+                                                <th style="text-align: center;">Total Sites</th>
+                                                <th style="text-align: center;">Completed</th>
+                                                <th style="text-align: center;">Pending</th>
+                                                <th style="text-align: center;">Achievement %</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="dir-project-health-table-body"></tbody>
                                     </table>
                                 </div>
                             </div>
                         </div>
                     </div>
+
+                    <!-- Payment Analytics -->
+                    <div class="director-section">
+                        <div class="section-header">
+                            <h3 class="section-title">Payment Analytics</h3>
+                        </div>
+                        <div class="chart-card">
+                            <h4>Operations Cost by Site (Completed)</h4>
+                            <div class="table-scroll-wrapper" style="max-height: 300px;">
+                                <table class="modal-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Site</th>
+                                            <th>Project</th>
+                                            <th>State</th>
+                                            <th style="text-align:right;">Total Payments</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="dir-operations-cost-tbody">
+                                        <tr><td colspan="4" style="text-align:center; color:var(--text-muted); padding:20px;">Loading…</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Vendor Payment Analysis -->
+                    <div class="director-section">
+                        <div class="section-header">
+                            <h3 class="section-title">Vendor Payment Analysis</h3>
+                            <div class="section-actions">
+                                <select id="vpa-mode-filter" class="filter-input" style="width:160px;">
+                                    <option value="all">All Modes</option>
+                                    <option value="With PO">With PO</option>
+                                    <option value="Without PO">Without PO</option>
+                                </select>
+                                <button id="vpa-export-btn" class="btn btn-secondary">
+                                    <i data-lucide="download"></i> Export Excel
+                                </button>
+                            </div>
+                        </div>
+                        <div class="chart-card">
+                            <div class="card-header-flex">
+                                <h4>Top 5 by Amount</h4>
+                                <span style="font-size:12px;color:var(--text-muted);">Approved &amp; Completed payments</span>
+                            </div>
+                            <div class="table-scroll-wrapper" style="max-height:340px;">
+                                <table class="modal-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Customer</th>
+                                            <th>Site</th>
+                                            <th style="text-align:right;">Amount (₹)</th>
+                                            <th>Created By</th>
+                                            <th>Accountant</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="vpa-table-tbody">
+                                        <tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:32px;">Loading…</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Hidden elements for JS compatibility -->
+                    <div style="display:none;">
+                        <tbody id="dir-sites-risk-table-body"></tbody>
+                        <button id="dir-export-sites-risk-btn"></button>
+                    </div>
                 </div>
             </div>
         </main>
+    </div>
+
+
+                <!-- ════════════════════════════════════════════════════
+                     HR DASHBOARD
+                ════════════════════════════════════════════════════ -->
+                <div class="director-dashboard-content hidden out-of-app-view" id="hr-dashboard-view">
+                    <!-- Header -->
+                    <div class="director-header-flex">
+                        <div class="director-title-box">
+                            <h2 class="section-title">HR Analytics Dashboard</h2>
+                            <p class="section-subtitle">Headcount, leave management, expenses, attendance regularization, and LWP monitoring</p>
+                        </div>
+                        <div style="display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap;">
+                            <div class="filter-group">
+                                <label for="hr-month-select">Month</label>
+                                <select id="hr-month-select" class="filter-select">
+                                    <option value="2026-01">January 2026</option>
+                                    <option value="2026-02">February 2026</option>
+                                    <option value="2026-03">March 2026</option>
+                                    <option value="2026-04">April 2026</option>
+                                    <option value="2026-05">May 2026</option>
+                                    <option value="2026-06" selected>June 2026</option>
+                                    <option value="2026-07">July 2026</option>
+                                    <option value="2026-08">August 2026</option>
+                                    <option value="2026-09">September 2026</option>
+                                    <option value="2026-10">October 2026</option>
+                                    <option value="2026-11">November 2026</option>
+                                    <option value="2026-12">December 2026</option>
+                                </select>
+                            </div>
+                            <div class="filter-group">
+                                <label for="hr-state-filter">Region / State</label>
+                                <select id="hr-state-filter" class="filter-select">
+                                    <option value="all">All States</option>
+                                </select>
+                            </div>
+                            <button id="hr-refresh-btn" class="btn btn-primary">
+                                <i data-lucide="refresh-cw"></i> Refresh
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Section 1: Headcount KPIs -->
+                    <div class="director-section">
+                        <div class="section-header">
+                            <h3 class="section-title">Headcount Overview</h3>
+                        </div>
+                        <div class="kpis-grid-four">
+                            <div class="kpi-card glassmorphic" id="card-hr-total-active" style="cursor:pointer;">
+                                <div class="kpi-icon bg-primary-light"><i data-lucide="users"></i></div>
+                                <div class="kpi-data">
+                                    <span class="kpi-value" id="hr-kpi-total-active">-</span>
+                                    <span class="kpi-label">Active Employees</span>
+                                </div>
+                            </div>
+                            <div class="kpi-card glassmorphic" id="card-hr-suspended" style="cursor:pointer;">
+                                <div class="kpi-icon bg-warning-light"><i data-lucide="user-minus"></i></div>
+                                <div class="kpi-data">
+                                    <span class="kpi-value text-warning" id="hr-kpi-suspended">-</span>
+                                    <span class="kpi-label">Suspended</span>
+                                </div>
+                            </div>
+                            <div class="kpi-card glassmorphic" id="card-hr-site-engineers" style="cursor:pointer;">
+                                <div class="kpi-icon bg-blue-light"><i data-lucide="cpu"></i></div>
+                                <div class="kpi-data">
+                                    <span class="kpi-value" id="hr-kpi-site-engineers">-</span>
+                                    <span class="kpi-label">Site Engineers</span>
+                                </div>
+                            </div>
+                            <div class="kpi-card glassmorphic" id="card-hr-managers" style="cursor:pointer;">
+                                <div class="kpi-icon bg-purple-light"><i data-lucide="briefcase"></i></div>
+                                <div class="kpi-data">
+                                    <span class="kpi-value" id="hr-kpi-managers">-</span>
+                                    <span class="kpi-label">Managers / PMs</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Section 2: Attendance Heatmap + Leave Summary -->
+                    <div class="director-section">
+                        <div class="charts-grid-two">
+                            <div class="chart-card">
+                                <h4>Attendance Trend (Last 30 Days)</h4>
+                                <div id="hr-attendance-chart"></div>
+                            </div>
+                            <div class="chart-card">
+                                <h4>Leave Status Breakdown (Month)</h4>
+                                <div id="hr-leave-status-chart"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Section 3: Leave KPIs + Expense KPIs -->
+                    <div class="director-section">
+                        <div class="charts-grid-two">
+                            <!-- Leave Summary -->
+                            <div class="chart-card">
+                                <h4>Leave Summary</h4>
+                                <div class="kpis-grid-two" style="margin-top:8px;">
+                                    <div class="kpi-card glassmorphic" id="card-hr-leave-pending" style="cursor:pointer;">
+                                        <div class="kpi-icon bg-warning-light"><i data-lucide="clock"></i></div>
+                                        <div class="kpi-data">
+                                            <span class="kpi-value text-warning" id="hr-kpi-leave-pending">-</span>
+                                            <span class="kpi-label">Pending Requests</span>
+                                        </div>
+                                    </div>
+                                    <div class="kpi-card glassmorphic" id="card-hr-leave-approved" style="cursor:pointer;">
+                                        <div class="kpi-icon bg-success-light"><i data-lucide="check-circle"></i></div>
+                                        <div class="kpi-data">
+                                            <span class="kpi-value text-success" id="hr-kpi-leave-approved">-</span>
+                                            <span class="kpi-label">Approved</span>
+                                        </div>
+                                    </div>
+                                    <div class="kpi-card glassmorphic" id="card-hr-leave-rejected" style="cursor:pointer;">
+                                        <div class="kpi-icon bg-danger-light"><i data-lucide="x-circle"></i></div>
+                                        <div class="kpi-data">
+                                            <span class="kpi-value text-danger" id="hr-kpi-leave-rejected">-</span>
+                                            <span class="kpi-label">Rejected</span>
+                                        </div>
+                                    </div>
+                                    <div class="kpi-card glassmorphic" id="card-hr-leave-days" style="cursor:pointer;">
+                                        <div class="kpi-icon bg-teal-light"><i data-lucide="calendar-days"></i></div>
+                                        <div class="kpi-data">
+                                            <span class="kpi-value" id="hr-kpi-leave-days">-</span>
+                                            <span class="kpi-label">Approved Days</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <!-- Expense Summary -->
+                            <div class="chart-card">
+                                <h4>Expense Summary</h4>
+                                <div class="kpis-grid-two" style="margin-top:8px;">
+                                    <div class="kpi-card glassmorphic" id="card-hr-exp-pending" style="cursor:pointer;">
+                                        <div class="kpi-icon bg-warning-light"><i data-lucide="receipt"></i></div>
+                                        <div class="kpi-data">
+                                            <span class="kpi-value text-warning" id="hr-kpi-exp-pending-count">-</span>
+                                            <span class="kpi-label">Pending Claims</span>
+                                        </div>
+                                    </div>
+                                    <div class="kpi-card glassmorphic" id="card-hr-exp-approved" style="cursor:pointer;">
+                                        <div class="kpi-icon bg-success-light"><i data-lucide="indian-rupee"></i></div>
+                                        <div class="kpi-data">
+                                            <span class="kpi-value text-success" id="hr-kpi-exp-approved-amt">-</span>
+                                            <span class="kpi-label">Approved Amount</span>
+                                        </div>
+                                    </div>
+                                    <div class="kpi-card glassmorphic" id="card-hr-exp-rejected" style="cursor:pointer;">
+                                        <div class="kpi-icon bg-danger-light"><i data-lucide="ban"></i></div>
+                                        <div class="kpi-data">
+                                            <span class="kpi-value text-danger" id="hr-kpi-exp-rejected-count">-</span>
+                                            <span class="kpi-label">Rejected Claims</span>
+                                        </div>
+                                    </div>
+                                    <div class="kpi-card glassmorphic" id="card-hr-exp-total" style="cursor:pointer;">
+                                        <div class="kpi-icon bg-info-light"><i data-lucide="wallet"></i></div>
+                                        <div class="kpi-data">
+                                            <span class="kpi-value" id="hr-kpi-exp-total-amt">-</span>
+                                            <span class="kpi-label">Total Claimed</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Section 4: Regularization + Leave Requests (left) | Pending Approvals + LWP (right) -->
+                    <div class="director-section">
+                        <div class="charts-grid-two" style="align-items:stretch;">
+                            <!-- Left column: Regularization stacked above Leave Requests -->
+                            <div style="display:flex; flex-direction:column; gap:16px;">
+                                <!-- Regularization & LWP Summary -->
+                                <div class="chart-card">
+                                    <h4>Regularization &amp; LWP Summary</h4>
+                                    <div class="kpis-grid-two" style="margin-top:8px;">
+                                        <div class="kpi-card glassmorphic">
+                                            <div class="kpi-icon bg-orange-light"><i data-lucide="alert-circle"></i></div>
+                                            <div class="kpi-data">
+                                                <span class="kpi-value text-danger" id="hr-kpi-absent-days">-</span>
+                                                <span class="kpi-label">Absent Person-Days</span>
+                                            </div>
+                                        </div>
+                                        <div class="kpi-card glassmorphic">
+                                            <div class="kpi-icon bg-red-light"><i data-lucide="user-x"></i></div>
+                                            <div class="kpi-data">
+                                                <span class="kpi-value text-danger" id="hr-kpi-absent-emps">-</span>
+                                                <span class="kpi-label">Employees with Absences</span>
+                                            </div>
+                                        </div>
+                                        <div class="kpi-card glassmorphic">
+                                            <div class="kpi-icon bg-warning-light"><i data-lucide="minus-circle"></i></div>
+                                            <div class="kpi-data">
+                                                <span class="kpi-value" id="hr-kpi-lwp-count">-</span>
+                                                <span class="kpi-label">LWP Records</span>
+                                            </div>
+                                        </div>
+                                        <div class="kpi-card glassmorphic">
+                                            <div class="kpi-icon bg-danger-light"><i data-lucide="calendar-x"></i></div>
+                                            <div class="kpi-data">
+                                                <span class="kpi-value text-danger" id="hr-kpi-lwp-days">-</span>
+                                                <span class="kpi-label">Total LWP Days</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <!-- Leave Requests (fills the gap below Regularization) -->
+                                <div class="chart-card" style="flex:1;">
+                                    <div class="card-header-flex">
+                                        <h4>Leave Requests</h4>
+                                        <div style="display:flex; gap:8px; align-items:center;">
+                                            <select id="hr-leave-status-filter" class="card-header-select">
+                                                <option value="all">All</option>
+                                                <option value="Pending">Pending</option>
+                                                <option value="Approved">Approved</option>
+                                                <option value="Rejected">Rejected</option>
+                                            </select>
+                                            <button id="hr-export-leaves-btn" class="btn btn-secondary btn-sm">
+                                                <i data-lucide="download"></i> Export
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div class="table-scroll-wrapper" style="max-height: 280px; margin-top:8px;">
+                                        <table class="modal-table">
+                                            <thead>
+                                                <tr>
+                                                    <th>Employee</th>
+                                                    <th>Type</th>
+                                                    <th style="text-align:center;">Days</th>
+                                                    <th style="text-align:center;">Status</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody id="hr-leave-requests-tbody"></tbody>
+                                        </table>
+                                    </div>
+                                    <div style="display:flex; justify-content:center; gap:16px; margin-top:12px; align-items:center;">
+                                        <button id="hr-leave-prev-btn" class="btn btn-secondary btn-sm">&#8249; Prev</button>
+                                        <span id="hr-leave-page-info" style="font-size:13px; color:var(--text-muted);">Page 1</span>
+                                        <button id="hr-leave-next-btn" class="btn btn-secondary btn-sm">Next &#8250;</button>
+                                    </div>
+                                </div>
+                            </div>
+                            <!-- Right column: Pending Approvals stacked above LWP -->
+                            <div style="display:flex; flex-direction:column; gap:16px;">
+                                <!-- Pending Approvals -->
+                                <div class="chart-card">
+                                    <div class="card-header-flex">
+                                        <h4>Pending Approvals</h4>
+                                        <div style="display:flex; gap:8px;">
+                                            <span id="hr-pending-leave-badge" style="font-size:12px; background:#fef3c7; color:#92400e; padding:3px 10px; border-radius:12px; font-weight:600;"></span>
+                                            <span id="hr-pending-exp-badge" style="font-size:12px; background:#ede9fe; color:#5b21b6; padding:3px 10px; border-radius:12px; font-weight:600;"></span>
+                                        </div>
+                                    </div>
+                                    <div class="table-scroll-wrapper" style="max-height: 260px; margin-top:8px;">
+                                        <table class="modal-table">
+                                            <thead>
+                                                <tr>
+                                                    <th>Employee</th>
+                                                    <th>Type</th>
+                                                    <th>Detail</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody id="hr-pending-approvals-tbody"></tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                                <!-- LWP Employees List -->
+                                <div class="chart-card" style="flex:1;">
+                                    <div class="card-header-flex">
+                                        <h4>LWP Employees (Month)</h4>
+                                        <button id="hr-export-lwp-btn" class="btn btn-secondary btn-sm">
+                                            <i data-lucide="download"></i> Export
+                                        </button>
+                                    </div>
+                                    <div class="table-scroll-wrapper" style="max-height: 280px; margin-top:8px;">
+                                        <table class="modal-table">
+                                            <thead>
+                                                <tr>
+                                                    <th>Employee</th>
+                                                    <th>Designation</th>
+                                                    <th>Manager</th>
+                                                    <th style="text-align:center;">LWP Days</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody id="hr-lwp-tbody"></tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+    <!-- Site Engineer – Idle Engineers Detailed Modal -->
+    <div class="modal-overlay" id="siteng-idle-modal">
+        <div class="modal-card" style="max-width: 900px;">
+            <div class="modal-header">
+                <h3 class="modal-title">All Idle Engineers (No Attendance &gt; 5 Days)</h3>
+                <button class="modal-close-btn" id="siteng-idle-modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="table-scroll-wrapper" style="max-height: 420px;">
+                    <table class="modal-table">
+                        <thead>
+                            <tr>
+                                <th>Emp ID</th>
+                                <th>Name</th>
+                                <th>Designation</th>
+                                <th>Manager</th>
+                                <th>Last Project</th>
+                                <th>Last Location</th>
+                                <th style="text-align:center;">Idle Days</th>
+                            </tr>
+                        </thead>
+                        <tbody id="siteng-idle-modal-tbody"></tbody>
+                    </table>
+                </div>
+                <div style="display: flex; justify-content: center; align-items: center; gap: 16px; margin-top: 16px;">
+                    <button id="siteng-idle-modal-prev" class="btn btn-secondary btn-sm">&#8249; Prev</button>
+                    <span id="siteng-idle-modal-page-info" style="font-size: 13px; color: var(--text-muted);">Page 1</span>
+                    <button id="siteng-idle-modal-next" class="btn btn-secondary btn-sm">Next &#8250;</button>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="siteng-idle-modal-export-btn" class="btn btn-primary">
+                    <i data-lucide="download"></i> Export Excel
+                </button>
+            </div>
+        </div>
     </div>
 
     <!-- Leave Drill-down Modal -->
@@ -509,9 +1161,7 @@
                                 <th>Duration (Days)</th>
                             </tr>
                         </thead>
-                        <tbody id="leave-modal-table-body">
-                            <!-- Loaded dynamically on click -->
-                        </tbody>
+                        <tbody id="leave-modal-table-body"></tbody>
                     </table>
                 </div>
             </div>
@@ -549,9 +1199,7 @@
                                 <th>Role / Designation</th>
                             </tr>
                         </thead>
-                        <tbody id="workforce-modal-table-body">
-                            <!-- Loaded dynamically on click -->
-                        </tbody>
+                        <tbody id="workforce-modal-table-body"></tbody>
                     </table>
                 </div>
             </div>
@@ -573,12 +1221,8 @@
             <div class="modal-body">
                 <div class="table-scroll-wrapper">
                     <table class="modal-table">
-                        <thead id="director-modal-table-header">
-                            <!-- Loaded dynamically based on KPI type -->
-                        </thead>
-                        <tbody id="director-modal-table-body">
-                            <!-- Loaded dynamically on click -->
-                        </tbody>
+                        <thead id="director-modal-table-header"></thead>
+                        <tbody id="director-modal-table-body"></tbody>
                     </table>
                 </div>
             </div>
