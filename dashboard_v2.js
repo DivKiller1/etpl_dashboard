@@ -3891,7 +3891,7 @@ function openHrLeaveKPIModal(type) {
     let rows = hrLeaveReqData || [];
     if (filterStatus) rows = rows.filter(r => (r.status || '').toLowerCase() === filterStatus.toLowerCase());
     const mapped = rows.slice(0, 200).map(r => ({
-        name: r.employeeName || r.userId || '—',
+        name: r.fullName || r.employeeName || '—',
         type: r.leaveType || r.type || '—',
         from: r.startDate || '—',
         to:   r.endDate   || '—',
