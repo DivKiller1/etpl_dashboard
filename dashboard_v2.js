@@ -3654,8 +3654,9 @@ async function fetchVendorPaymentAnalysis() {
 }
 
 function renderVendorPaymentAnalysis(rows) {
-    const tbody = document.getElementById('vpa-table-tbody');
-    const tfoot = document.getElementById('vpa-table-tfoot');
+    const tbody   = document.getElementById('vpa-table-tbody');
+    const totalBar = document.getElementById('vpa-grand-total-bar');
+    const totalAmt = document.getElementById('vpa-grand-total-amount');
     if (!tbody) return;
 
     // Apply status filter (client-side)
@@ -3664,7 +3665,7 @@ function renderVendorPaymentAnalysis(rows) {
 
     if (!filtered.length) {
         tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:32px;color:var(--text-muted);">No payment records found</td></tr>`;
-        if (tfoot) tfoot.innerHTML = '';
+        if (totalBar) totalBar.style.display = 'none';
         return;
     }
 
@@ -3684,16 +3685,10 @@ function renderVendorPaymentAnalysis(rows) {
             <td style="text-align:center;">${statusBadge(r.status)}</td>
         </tr>`).join('');
 
-    // Grand total row
+    // Grand total — always-visible bar below the scroll area
     const grandTotal = filtered.reduce((sum, r) => sum + (r.amount || 0), 0);
-    if (tfoot) {
-        tfoot.innerHTML = `
-            <tr style="border-top:2px solid var(--border);background:var(--bg-secondary);">
-                <td style="font-weight:700;padding:10px 12px;">Grand Total</td>
-                <td style="text-align:right;font-weight:700;color:#1e1b4b;padding:10px 12px;">${fmtInr(grandTotal)}</td>
-                <td colspan="4"></td>
-            </tr>`;
-    }
+    if (totalBar) totalBar.style.display = 'flex';
+    if (totalAmt) totalAmt.textContent = fmtInr(grandTotal);
 }
 
 async function exportVendorPaymentExcel() {
