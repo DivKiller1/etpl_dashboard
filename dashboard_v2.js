@@ -2077,7 +2077,6 @@ function renderSiteEngStatusChart(d) {
 
     const rows = [
         { icon: 'map-pin',      label: 'On Site',    val: d.onSite   ?? 0, color: '#10b981' },
-        { icon: 'car',          label: 'Travelling',  val: d.traveling?? 0, color: '#3b82f6' },
         { icon: 'building-2',   label: 'At Office',   val: d.atOffice ?? 0, color: '#6366f1' },
         { icon: 'calendar-off', label: 'On Leave',    val: d.onLeave  ?? 0, color: '#f59e0b' },
         { icon: 'minus-circle', label: 'On LWP',      val: d.onLWP    ?? 0, color: '#a78bfa' },
@@ -2104,7 +2103,6 @@ function renderSiteEngStatusChart(d) {
     // Also populate the 6-card activity status KPIs
     const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val ?? 0; };
     set('siteng-act-onsite',    d.onSite    ?? 0);
-    set('siteng-act-travelling', d.traveling ?? 0);
     set('siteng-act-atoffice',  d.atOffice  ?? 0);
     set('siteng-act-onleave',   d.onLeave   ?? 0);
     set('siteng-act-lwp',       d.onLWP     ?? 0);
@@ -4053,7 +4051,6 @@ document.addEventListener('DOMContentLoaded', () => {
     // Siteng activity status cards (from engineer-status-today)
     const seStatusMap = {
         'card-se-act-onsite':    'onSite',
-        'card-se-act-travelling':'traveling',
         'card-se-act-atoffice':  'atOffice',
         'card-se-act-onleave':   'onLeave',
         'card-se-act-lwp':       'onLWP',
