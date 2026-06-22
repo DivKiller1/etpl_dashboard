@@ -735,7 +735,7 @@ router.get('/director-data', async (req, res) => {
                         const customerName = sId ? (siteCustomerMap[sId] || 'ETPL') : 'ETPL';
 
                         const checkInTimeFormatted = att.checkInTime 
-                            ? new Date(att.checkInTime * 1000).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })
+                            ? new Date(att.checkInTime * 1000).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' })
                             : 'N/A';
                         
                         engineerLocations.push({
@@ -773,7 +773,7 @@ router.get('/director-data', async (req, res) => {
                 const customerName = sId ? (siteCustomerMap[sId] || 'ETPL') : 'ETPL';
 
                 const checkInTimeFormatted = att.checkInTime 
-                    ? new Date(att.checkInTime * 1000).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })
+                    ? new Date(att.checkInTime * 1000).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' })
                     : 'N/A';
 
                 detailPresentToday.push({
@@ -828,7 +828,7 @@ router.get('/director-data', async (req, res) => {
                 const sId = att.siteId?.toString();
                 const siteName = sId ? (siteMap[sId] || 'Office') : 'Office';
                 const checkInTimeFormatted = att.checkInTime 
-                    ? new Date(att.checkInTime * 1000).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })
+                    ? new Date(att.checkInTime * 1000).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' })
                     : 'N/A';
                 detailLateEmployees.push({
                     employeeId: emp.employeeId || 'N/A',
@@ -882,7 +882,7 @@ router.get('/director-data', async (req, res) => {
                 const customerName = sId ? (siteCustomerMap[sId] || 'ETPL') : 'ETPL';
 
                 const checkInTimeFormatted = att.checkInTime 
-                    ? new Date(att.checkInTime * 1000).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })
+                    ? new Date(att.checkInTime * 1000).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' })
                     : 'N/A';
 
                 detailDeployedSiteEngineers.push({
