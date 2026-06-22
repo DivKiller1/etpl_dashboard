@@ -2180,6 +2180,7 @@ function renderSiteEngProjectHealth(d) {
             <td style="text-align:center;">${badge}</td>
         </tr>`;
     }).join('');
+    makeSortable('siteng-project-health-tbody');
 }
 
 // ── Render: PM Performance Table ─────────────────────────────────────────────
@@ -2193,6 +2194,7 @@ function renderSiteEngPMPerf(d) {
         <td style="text-align:center;">${r.completedCount}</td>
         <td style="text-align:center;">${r.utilizationPercent}%</td>
     </tr>`).join('');
+    makeSortable('siteng-pm-perf-tbody');
 }
 
 // ── Render: Sites & Manpower Summary Mini-Grid ───────────────────────────────
@@ -2248,6 +2250,7 @@ function renderSiteEngIdleTop5(d) {
         <td>${escapeHtml(r.lastLocation)}</td>
         <td style="text-align:center;">${r.idleDays}</td>
     </tr>`).join('');
+    makeSortable('siteng-idle-top5-tbody');
 }
 
 // ── Render: Idle Modal Rows ───────────────────────────────────────────────────
@@ -2275,6 +2278,11 @@ function renderSiteEngIdleModal(rows) {
         <td>${escapeHtml(r.lastLocation)}</td>
         <td style="text-align:center;">${r.idleDays}</td>
     </tr>`).join('');
+
+    // Reset sortable flag on page change so arrows re-attach
+    const tbl = tbody.closest('table');
+    if (tbl) delete tbl.dataset.sortable;
+    makeSortable('siteng-idle-modal-tbody');
 
     const totalPages = Math.max(1, Math.ceil(seIdleTotal / seIdleLimit));
     if (pageInfo) pageInfo.textContent = `Page ${seIdlePage} of ${totalPages}`;
@@ -2334,6 +2342,65 @@ function escapeHtml(str) {
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;');
+}
+
+/**
+ * Attach sortable column headers to any table.
+ * Pass the tbody's id — the table and thead are found automatically.
+ * Safe to call multiple times (idempotent via data-sortable flag on <table>).
+ */
+function makeSortable(tbodyId) {
+    const tbody = document.getElementById(tbodyId);
+    if (!tbody) return;
+    const table = tbody.closest('table');
+    if (!table || table.dataset.sortable) return; // already wired
+    table.dataset.sortable = '1';
+
+    const ths = table.querySelectorAll('thead th');
+    if (!ths.length) return;
+
+    ths.forEach((th, colIdx) => {
+        th.style.cursor = 'pointer';
+        th.style.userSelect = 'none';
+        th.style.whiteSpace = 'nowrap';
+
+        const icon = document.createElement('span');
+        icon.className = 'th-sort-icon';
+        icon.style.cssText = 'margin-left:5px;opacity:0.35;font-size:10px;vertical-align:middle;';
+        icon.textContent = '⇅';
+        th.appendChild(icon);
+
+        th.addEventListener('click', () => {
+            const rows = Array.from(tbody.querySelectorAll('tr'));
+            if (rows.length <= 1) return;
+
+            const wasAsc = th.dataset.sortDir === 'asc';
+            const isAsc  = !wasAsc;
+
+            // Reset all headers
+            ths.forEach(t => {
+                delete t.dataset.sortDir;
+                const ic = t.querySelector('.th-sort-icon');
+                if (ic) { ic.textContent = '⇅'; ic.style.opacity = '0.35'; }
+            });
+
+            th.dataset.sortDir = isAsc ? 'asc' : 'desc';
+            icon.textContent = isAsc ? '▲' : '▼';
+            icon.style.opacity = '1';
+
+            rows.sort((a, b) => {
+                const aText = (a.cells[colIdx]?.textContent || '').trim();
+                const bText = (b.cells[colIdx]?.textContent || '').trim();
+                // Strip currency/commas for numeric comparison
+                const aNum = parseFloat(aText.replace(/[₹,\s%]/g, ''));
+                const bNum = parseFloat(bText.replace(/[₹,\s%]/g, ''));
+                if (!isNaN(aNum) && !isNaN(bNum)) return isAsc ? aNum - bNum : bNum - aNum;
+                return isAsc ? aText.localeCompare(bText) : bText.localeCompare(aText);
+            });
+
+            rows.forEach(r => tbody.appendChild(r));
+        });
+    });
 }
 
 // ── Site Engineer Event Listeners (separate DOMContentLoaded block) ──────────
@@ -2674,6 +2741,10 @@ function renderDirectorDashboard(data) {
             });
         }
     }
+
+    makeSortable('dir-pm-performance-table-body');
+    makeSortable('dir-project-health-table-body');
+    makeSortable('dir-idle-engineers-table-body');
 
     // 4. Render Charts
     renderDirectorCharts(charts);
@@ -3380,6 +3451,7 @@ function renderHrPendingApprovals(pending) {
             </td>
             <td style="font-size:12px;color:var(--text-muted);">${escapeHtml(item.detail)}</td>
         </tr>`).join('');
+    makeSortable('hr-pending-approvals-tbody');
 }
 
 function renderHrLeaveRequests(rows) {
@@ -3405,6 +3477,7 @@ function renderHrLeaveRequests(rows) {
                 </span>
             </td>
         </tr>`).join('');
+    makeSortable('hr-leave-requests-tbody');
 }
 
 function renderHrLeavePageInfo() {
@@ -3436,6 +3509,7 @@ function renderHrLwpTable(rows) {
             <td style="font-size:12px;color:var(--text-muted);">${escapeHtml(r.managerName)}</td>
             <td style="text-align:center;font-weight:700;color:#ef4444;">${r.days}</td>
         </tr>`).join('');
+    makeSortable('hr-lwp-tbody');
 }
 
 // ── Exports ───────────────────────────────────────────────────────────────────
@@ -3633,6 +3707,7 @@ function renderOperationsCostTable(rows) {
             <td style="text-align:right; font-weight:700; color:#1e1b4b;">${fmtInr(r.totalPayments)}</td>
         </tr>
     `).join('');
+    makeSortable('dir-operations-cost-tbody');
 }
 
 // ── Vendor Payment Analysis ──────────────────────────────────────────────────
@@ -3689,6 +3764,7 @@ function renderVendorPaymentAnalysis(rows) {
     const grandTotal = filtered.reduce((sum, r) => sum + (r.amount || 0), 0);
     if (totalBar) totalBar.style.display = 'flex';
     if (totalAmt) totalAmt.textContent = fmtInr(grandTotal);
+    makeSortable('vpa-table-tbody');
 }
 
 async function exportVendorPaymentExcel() {
@@ -3814,6 +3890,7 @@ function renderDirectorLeaveTable(rows) {
             <td style="text-align:center;font-weight:600;">${r.duration ?? '—'}</td>
         </tr>`;
     }).join('');
+    makeSortable('dir-leave-table-tbody');
 }
 
 async function exportDirectorLeavesExcel() {
@@ -3868,6 +3945,11 @@ function openGenericKPIModal(title, columns, rows) {
                 `<tr>${columns.map((_, i) => `<td>${Object.values(r)[i] ?? '—'}</td>`).join('')}</tr>`
             ).join('');
         }
+
+        // Reset sortable flag so arrows re-attach after each modal open
+        const tbl = bodyEl.closest('table');
+        if (tbl) delete tbl.dataset.sortable;
+        makeSortable('director-modal-table-body');
 
         modal.style.display = '';  // clear any inline override
         modal.classList.add('active');
