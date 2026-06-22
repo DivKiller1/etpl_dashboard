@@ -1284,7 +1284,7 @@ router.get('/employee-leaves', async (req, res) => {
     }
 });
 
-// GET /payments/analysis — top 5 vendor payments by amount with user lookups
+// GET /payments/analysis — all vendor payments with embedded name fields
 router.get('/payments/analysis', async (req, res) => {
     try {
         const { mode } = req.query;
@@ -1295,61 +1295,36 @@ router.get('/payments/analysis', async (req, res) => {
 
         const records = await PaymentManagement.aggregate([
             { $match: match },
-            { $addFields: {
-                siteObjId:      { $convert: { input: '$siteId',     to: 'objectId', onError: null, onNull: null } },
-                creatorObjId:   { $convert: { input: { $ifNull: ['$createdBy',   '$userId']                   }, to: 'objectId', onError: null, onNull: null } },
-                accountantObjId:{ $convert: { input: { $ifNull: ['$completedBy', { $ifNull: ['$approvedBy', '$processedBy'] }] }, to: 'objectId', onError: null, onNull: null } }
-            }},
             { $sort: { requestedAmount: -1 } },
-            { $limit: 5 },
-            { $lookup: { from: 'sites',     localField: 'siteObjId',      foreignField: '_id', as: 'siteInfo' } },
-            { $unwind: { path: '$siteInfo',      preserveNullAndEmptyArrays: true } },
-            { $lookup: { from: 'customers', localField: 'customerId',     foreignField: '_id', as: 'custInfo' } },
-            { $unwind: { path: '$custInfo',      preserveNullAndEmptyArrays: true } },
-            { $lookup: { from: 'users',     localField: 'creatorObjId',   foreignField: '_id', as: 'creatorInfo' } },
-            { $unwind: { path: '$creatorInfo',   preserveNullAndEmptyArrays: true } },
-            { $lookup: { from: 'users',     localField: 'accountantObjId', foreignField: '_id', as: 'accountantInfo' } },
-            { $unwind: { path: '$accountantInfo', preserveNullAndEmptyArrays: true } },
             { $project: {
                 _id: 1,
-                requestName: { $ifNull: ['$requestName', { $concat: ['REQ-', { $substr: [{ $toString: '$_id' }, 18, 6] }] }] },
-                customerName:   { $ifNull: ['$custInfo.name', 'Unknown'] },
-                siteName:       { $ifNull: ['$siteInfo.name', 'Unknown'] },
-                amount:         { $ifNull: ['$requestedAmount', 0] },
-                requestMode:    1,
-                status:         1,
-                createdByName: {
+                requestMode: 1,
+                status: 1,
+                // Vendor: use vendorName for With PO, customerName for Without PO
+                vendorName: {
                     $cond: {
-                        if: { $ifNull: ['$creatorInfo', false] },
-                        then: {
-                            $trim: { input: {
-                                $concat: [
-                                    { $ifNull: ['$creatorInfo.fullName', ''] },
-                                    { $cond: { if: { $ifNull: ['$creatorInfo.lastName', false] }, then: { $concat: [' ', '$creatorInfo.lastName'] }, else: '' } }
-                                ]
-                            }}
-                        },
-                        else: { $ifNull: ['$creatorInfo.name', '—'] }
+                        if: { $and: [{ $ifNull: ['$vendorName', false] }, { $gt: [{ $strLenCP: { $ifNull: ['$vendorName', ''] } }, 0] }] },
+                        then: '$vendorName',
+                        else: { $ifNull: ['$customerName', '—'] }
                     }
                 },
-                accountantName: {
-                    $cond: {
-                        if: { $ifNull: ['$accountantInfo', false] },
-                        then: {
-                            $trim: { input: {
-                                $concat: [
-                                    { $ifNull: ['$accountantInfo.fullName', ''] },
-                                    { $cond: { if: { $ifNull: ['$accountantInfo.lastName', false] }, then: { $concat: [' ', '$accountantInfo.lastName'] }, else: '' } }
-                                ]
-                            }}
-                        },
-                        else: { $ifNull: ['$accountantInfo.name', '—'] }
-                    }
-                }
+                amount:        { $ifNull: ['$requestedAmount', 0] },
+                // Names already embedded on every document — no lookup needed
+                createdByName:  { $ifNull: ['$createdByName',  '—'] },
+                accountantName: { $ifNull: ['$accountantName', '—'] },
+                completedAt:    1
             }}
         ]);
 
-        res.json({ success: true, data: records });
+        // Format completedAt in IST
+        const formatted = records.map(r => ({
+            ...r,
+            completedAt: r.completedAt
+                ? new Date(r.completedAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' })
+                : '—'
+        }));
+
+        res.json({ success: true, data: formatted });
     } catch (err) {
         console.error('[dashboard] /payments/analysis:', err.message);
         res.status(500).json({ success: false, error: err.message });

@@ -3660,14 +3660,13 @@ function renderVendorPaymentAnalysis(rows) {
         tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;padding:32px;color:var(--text-muted);">No payment records found</td></tr>`;
         return;
     }
-    const modeClass = m => /with.po/i.test(m || '') ? 'badge-mode-po' : 'badge-mode-nopo';
-    tbody.innerHTML = rows.map((r, i) => `
+    tbody.innerHTML = rows.map(r => `
         <tr>
-            <td><strong>${r.customerName || '—'}</strong></td>
-            <td>${r.siteName || '—'}</td>
+            <td><strong>${r.vendorName || '—'}</strong></td>
             <td style="text-align:right;font-weight:700;color:#1e1b4b;">${fmtInr(r.amount || 0)}</td>
             <td>${r.createdByName || '—'}</td>
             <td>${r.accountantName || '—'}</td>
+            <td style="text-align:center;">${r.completedAt || '—'}</td>
         </tr>`).join('');
 }
 
