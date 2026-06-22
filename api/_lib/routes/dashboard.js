@@ -1072,7 +1072,7 @@ router.get('/director-data', async (req, res) => {
 router.get('/vendor-payment-distribution', async (req, res) => {
     try {
         const results = await PaymentManagement.aggregate([
-            { $match: { isDeleted: { $ne: true } } },
+            { $match: { isDeleted: { $ne: true }, status: { $regex: /^completed$/i } } },
             { $group: {
                 _id: '$requestMode',
                 count: { $sum: 1 },

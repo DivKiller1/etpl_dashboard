@@ -775,6 +775,11 @@
                                     <option value="With PO">With PO</option>
                                     <option value="Without PO">Without PO</option>
                                 </select>
+                                <select id="vpa-status-filter" class="filter-input" style="width:150px;">
+                                    <option value="all">All Statuses</option>
+                                    <option value="Completed">Completed</option>
+                                    <option value="Approved">Approved (Pending)</option>
+                                </select>
                                 <button id="vpa-export-btn" class="btn btn-secondary">
                                     <i data-lucide="download"></i> Export Excel
                                 </button>
@@ -782,7 +787,7 @@
                         </div>
                         <div class="chart-card">
                             <div class="card-header-flex">
-                                <h4>Top 5 by Amount</h4>
+                                <h4>All Payments</h4>
                                 <span style="font-size:12px;color:var(--text-muted);">Approved &amp; Completed payments</span>
                             </div>
                             <div class="table-scroll-wrapper" style="max-height:340px;">
@@ -794,11 +799,13 @@
                                             <th>Created By</th>
                                             <th>Accountant</th>
                                             <th style="text-align:center;">Date Completed</th>
+                                            <th style="text-align:center;">Status</th>
                                         </tr>
                                     </thead>
                                     <tbody id="vpa-table-tbody">
-                                        <tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:32px;">Loading…</td></tr>
+                                        <tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:32px;">Loading…</td></tr>
                                     </tbody>
+                                    <tfoot id="vpa-table-tfoot"></tfoot>
                                 </table>
                             </div>
                         </div>

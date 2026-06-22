@@ -3640,7 +3640,7 @@ let vpaCache = [];
 
 async function fetchVendorPaymentAnalysis() {
     const tbody = document.getElementById('vpa-table-tbody');
-    if (tbody) tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;padding:32px;color:var(--text-muted);">Loading…</td></tr>`;
+    if (tbody) tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:32px;color:var(--text-muted);">Loading…</td></tr>`;
     try {
         const mode = document.getElementById('vpa-mode-filter')?.value || 'all';
         const url  = `${payApiBase()}/payments/analysis?mode=${encodeURIComponent(mode)}`;
@@ -3648,26 +3648,52 @@ async function fetchVendorPaymentAnalysis() {
         vpaCache   = res.data || [];
         renderVendorPaymentAnalysis(vpaCache);
     } catch (err) {
-        if (tbody) tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;padding:32px;color:#ef4444;">Failed to load payment data.</td></tr>`;
+        if (tbody) tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:32px;color:#ef4444;">Failed to load payment data.</td></tr>`;
         console.error('[VPA]', err);
     }
 }
 
 function renderVendorPaymentAnalysis(rows) {
     const tbody = document.getElementById('vpa-table-tbody');
+    const tfoot = document.getElementById('vpa-table-tfoot');
     if (!tbody) return;
-    if (!rows || !rows.length) {
-        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;padding:32px;color:var(--text-muted);">No payment records found</td></tr>`;
+
+    // Apply status filter (client-side)
+    const statusFilter = document.getElementById('vpa-status-filter')?.value || 'all';
+    const filtered = statusFilter === 'all' ? rows : rows.filter(r => (r.status || '').toLowerCase() === statusFilter.toLowerCase());
+
+    if (!filtered.length) {
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:32px;color:var(--text-muted);">No payment records found</td></tr>`;
+        if (tfoot) tfoot.innerHTML = '';
         return;
     }
-    tbody.innerHTML = rows.map(r => `
+
+    const statusBadge = s => {
+        const lower = (s || '').toLowerCase();
+        const color = lower === 'completed' ? '#10b981' : '#f59e0b';
+        return `<span style="background:${color}1a;color:${color};padding:2px 8px;border-radius:9999px;font-size:11px;font-weight:600;">${s || '—'}</span>`;
+    };
+
+    tbody.innerHTML = filtered.map(r => `
         <tr>
             <td><strong>${r.vendorName || '—'}</strong></td>
             <td style="text-align:right;font-weight:700;color:#1e1b4b;">${fmtInr(r.amount || 0)}</td>
             <td>${r.createdByName || '—'}</td>
             <td>${r.accountantName || '—'}</td>
             <td style="text-align:center;">${r.completedAt || '—'}</td>
+            <td style="text-align:center;">${statusBadge(r.status)}</td>
         </tr>`).join('');
+
+    // Grand total row
+    const grandTotal = filtered.reduce((sum, r) => sum + (r.amount || 0), 0);
+    if (tfoot) {
+        tfoot.innerHTML = `
+            <tr style="border-top:2px solid var(--border);background:var(--bg-secondary);">
+                <td style="font-weight:700;padding:10px 12px;">Grand Total</td>
+                <td style="text-align:right;font-weight:700;color:#1e1b4b;padding:10px 12px;">${fmtInr(grandTotal)}</td>
+                <td colspan="4"></td>
+            </tr>`;
+    }
 }
 
 async function exportVendorPaymentExcel() {
@@ -3922,6 +3948,7 @@ function openHrExpenseKPIModal(type) {
 document.addEventListener('DOMContentLoaded', () => {
     // Vendor Payment Analysis
     document.getElementById('vpa-mode-filter')?.addEventListener('change', fetchVendorPaymentAnalysis);
+    document.getElementById('vpa-status-filter')?.addEventListener('change', () => renderVendorPaymentAnalysis(vpaCache));
     document.getElementById('vpa-export-btn')?.addEventListener('click', exportVendorPaymentExcel);
 
     // Director expense export (mirrored button in director dashboard)
