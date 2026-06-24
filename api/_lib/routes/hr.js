@@ -51,8 +51,9 @@ async function buildHrCtx(query) {
         return emp.managerDetails?.name || 'N/A';
     };
 
-    // Active employees (not suspended)
-    let activeEmps = allUsers.filter(u => !u.isSuspended);
+    // Active employees (not suspended, not director)
+    const isDirector = u => /director/i.test(u.roleId || '') || /director/i.test(u.designation || '');
+    let activeEmps = allUsers.filter(u => !u.isSuspended && !isDirector(u));
 
     // State filter via employee baseLocation
     if (stateFilter) {
@@ -79,7 +80,8 @@ async function buildHrCtx(query) {
 router.get('/headcount-summary', async (req, res) => {
     try {
         const all        = await User.find({}).lean();
-        const active     = all.filter(u => !u.isDeleted && !u.isSuspended);
+        const isDir      = u => /director/i.test(u.roleId || '') || /director/i.test(u.designation || '');
+        const active     = all.filter(u => !u.isDeleted && !u.isSuspended && !isDir(u));
         const suspended  = all.filter(u => !u.isDeleted && u.isSuspended);
         const deleted    = all.filter(u => u.isDeleted);
 

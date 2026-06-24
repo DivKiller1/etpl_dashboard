@@ -1295,21 +1295,26 @@ router.get('/payments/analysis', async (req, res) => {
 
         const records = await PaymentManagement.aggregate([
             { $match: match },
-            { $sort: { requestedAmount: -1 } },
+            // Look up site for Without PO records (siteId stored as string → convert)
+            { $addFields: {
+                siteObjId: { $convert: { input: '$siteId', to: 'objectId', onError: null, onNull: null } }
+            }},
+            { $lookup: { from: 'sites', localField: 'siteObjId', foreignField: '_id', as: 'siteInfo' } },
+            { $unwind: { path: '$siteInfo', preserveNullAndEmptyArrays: true } },
+            { $sort: { completedAt: -1, _id: -1 } },
             { $project: {
                 _id: 1,
                 requestMode: 1,
                 status: 1,
-                // Vendor: use vendorName for With PO, customerName for Without PO
+                // With PO → vendorName; Without PO → siteName from lookup, fallback customerName
                 vendorName: {
                     $cond: {
                         if: { $and: [{ $ifNull: ['$vendorName', false] }, { $gt: [{ $strLenCP: { $ifNull: ['$vendorName', ''] } }, 0] }] },
                         then: '$vendorName',
-                        else: { $ifNull: ['$customerName', '—'] }
+                        else: { $ifNull: ['$siteInfo.name', { $ifNull: ['$customerName', '—'] }] }
                     }
                 },
-                amount:        { $ifNull: ['$requestedAmount', 0] },
-                // Names already embedded on every document — no lookup needed
+                amount:         { $ifNull: ['$requestedAmount', 0] },
                 createdByName:  { $ifNull: ['$createdByName',  '—'] },
                 accountantName: { $ifNull: ['$accountantName', '—'] },
                 completedAt:    1

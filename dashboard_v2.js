@@ -490,183 +490,74 @@ function renderLeaveDistribution(leaveData) {
 }
 
 // Render Chart 3: Grouped Vertical Bar Chart of Customer Expenses
+// Cache for expense data used by both tables
+let expenseDataCache = [];
+
 function renderCustomerExpenses(expenseData) {
-    const customers = [...new Set(expenseData.map(r => r.customerName))];
-    const categories = ["TA", "DA", "Hotel", "Other"];
-
-    const seriesData = categories.map(cat => {
-        return {
-            name: cat,
-            data: customers.map(cust => {
-                return expenseData
-                    .filter(r => r.customerName === cust && (cat === 'Other' ? !["TA", "DA", "Hotel"].includes(r.category) : r.category === cat))
-                    .reduce((sum, r) => sum + r.amount, 0);
-            })
-        };
-    });
-
-    const options = {
-        series: seriesData,
-        chart: {
-            type: 'bar',
-            height: 200,
-            stacked: true,
-            toolbar: { show: false }
-        },
-        plotOptions: {
-            bar: {
-                horizontal: false,
-                columnWidth: '35%',
-                borderRadius: 3
-            }
-        },
-        xaxis: {
-            categories: customers,
-            labels: {
-                rotate: -45,
-                style: { fontSize: '11px', fontWeight: 500 }
-            }
-        },
-        yaxis: {
-            labels: { formatter: (val) => '₹' + val.toLocaleString('en-IN') }
-        },
-        colors: ['#6366f1', '#10b981', '#f59e0b', '#3b82f6'],
-        tooltip: {
-            y: { formatter: (val) => '₹' + val.toLocaleString('en-IN') }
-        },
-        legend: { position: 'top', horizontalAlign: 'left' }
-    };
-
-    const expEl = document.querySelector('#customer-expenses-chart');
-    if (!expEl) return;
-    if (chartCustomerExpenses) chartCustomerExpenses.destroy();
-
-    if (customers.length === 0) {
-        expEl.innerHTML = '<div style="padding:60px; text-align:center; color:#888;">No expense data in selected range</div>';
-        return;
-    }
-
-    expEl.innerHTML = '';
-    chartCustomerExpenses = new ApexCharts(expEl, options);
-    chartCustomerExpenses.render();
+    expenseDataCache = expenseData || [];
+    populateExpenseCustomerFilters(expenseData);
+    renderExpenseTable();
+    renderExpenseTypeTable();
 }
 
-// Helper to populate the customer filter select dropdown dynamically
-function renderCustomerSelectDropdown(expenseData) {
-    const dropdown = document.getElementById('customer-select');
-    if (!dropdown) return;
-
+function populateExpenseCustomerFilters(expenseData) {
     const customers = [...new Set(expenseData.map(r => r.customerName))].sort();
-    const prevSelection = dropdown.value;
-
-    dropdown.innerHTML = '';
-    customers.forEach(cust => {
-        const opt = document.createElement('option');
-        opt.value = cust;
-        opt.textContent = cust;
-        if (cust === prevSelection) opt.selected = true;
-        dropdown.appendChild(opt);
+    ['exp-customer-filter', 'exp-type-customer-filter'].forEach(id => {
+        const sel = document.getElementById(id);
+        if (!sel) return;
+        const prev = sel.value;
+        sel.innerHTML = '<option value="all">All Customers</option>';
+        customers.forEach(c => {
+            const o = document.createElement('option');
+            o.value = c; o.textContent = c;
+            if (c === prev) o.selected = true;
+            sel.appendChild(o);
+        });
     });
-
-    if (customers.length === 0) {
-        const opt = document.createElement('option');
-        opt.value = 'none';
-        opt.textContent = 'No Customers';
-        dropdown.appendChild(opt);
-    }
 }
 
-// Render dynamic linked pie charts for Customer Site Breakdown & Expense Types
-function renderCustomerBreakdowns(expenseData) {
-    const selectedCust = document.getElementById('customer-select')?.value;
-    if (!selectedCust || selectedCust === 'none') {
-        renderEmptyCustomerBreakdownCharts();
+function renderExpenseTable() {
+    const tbody = document.getElementById('customer-expenses-tbody');
+    if (!tbody) return;
+    const filter = document.getElementById('exp-customer-filter')?.value || 'all';
+    const rows = filter === 'all' ? expenseDataCache : expenseDataCache.filter(r => r.customerName === filter);
+    if (!rows.length) {
+        tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:24px;color:var(--text-muted);">No expense data</td></tr>';
         return;
     }
-
-    const custExpenses = expenseData.filter(r => r.customerName === selectedCust);
-
-    // 1. Site Breakdown Pie Chart
-    const siteTotals = {};
-    custExpenses.forEach(r => {
-        siteTotals[r.site] = (siteTotals[r.site] || 0) + r.amount;
-    });
-    const siteSeries = Object.values(siteTotals);
-    const siteLabels = Object.keys(siteTotals);
-
-    const siteOptions = {
-        series: siteSeries,
-        labels: siteLabels,
-        chart: { type: 'pie', height: 200 },
-        legend: { position: 'right', fontSize: '11px' },
-        dataLabels: {
-            enabled: true,
-            formatter: (val) => val.toFixed(1) + '%',
-            style: { fontSize: '11px', fontWeight: '600', colors: ['#fff'] },
-            dropShadow: { enabled: false }
-        },
-        tooltip: { y: { formatter: (val) => '₹' + val.toLocaleString('en-IN') } },
-        colors: ['#6366f1', '#10b981', '#f59e0b', '#3b82f6', '#ef4444', '#8b5cf6']
-    };
-
-    const siteEl = document.querySelector('#customer-site-chart');
-    if (chartCustomerSite) chartCustomerSite.destroy();
-    if (siteEl) {
-        if (siteSeries.length > 0) {
-            siteEl.innerHTML = '';
-            chartCustomerSite = new ApexCharts(siteEl, siteOptions);
-            chartCustomerSite.render();
-        } else {
-            siteEl.innerHTML = '<div style="padding:60px; text-align:center; color:#888;">No site data available</div>';
-        }
-    }
-
-    // 2. Expense Category Types Breakdown Pie Chart
-    const categoryTotals = { TA: 0, DA: 0, Hotel: 0, Other: 0 };
-    custExpenses.forEach(r => {
-        const norm = ["TA", "DA", "Hotel"].includes(r.category) ? r.category : 'Other';
-        categoryTotals[norm] += r.amount;
-    });
-    const typeSeries = Object.values(categoryTotals);
-    const typeLabels = Object.keys(categoryTotals);
-
-    const typeOptions = {
-        series: typeSeries,
-        labels: typeLabels,
-        chart: { type: 'pie', height: 200 },
-        legend: { position: 'right', fontSize: '11px' },
-        dataLabels: {
-            enabled: true,
-            formatter: (val) => val.toFixed(1) + '%',
-            style: { fontSize: '11px', fontWeight: '600', colors: ['#fff'] },
-            dropShadow: { enabled: false }
-        },
-        tooltip: { y: { formatter: (val) => '₹' + val.toLocaleString('en-IN') } },
-        colors: ['#6366f1', '#10b981', '#f59e0b', '#3b82f6']
-    };
-
-    const typeEl = document.querySelector('#expense-types-chart');
-    if (chartExpenseTypes) chartExpenseTypes.destroy();
-    if (typeEl) {
-        if (typeSeries.some(v => v > 0)) {
-            typeEl.innerHTML = '';
-            chartExpenseTypes = new ApexCharts(typeEl, typeOptions);
-            chartExpenseTypes.render();
-        } else {
-            typeEl.innerHTML = '<div style="padding:60px; text-align:center; color:#888;">No category data available</div>';
-        }
-    }
+    tbody.innerHTML = rows.map(r => `<tr>
+        <td>${escapeHtml(r.customerName)}</td>
+        <td>${escapeHtml(r.site || '—')}</td>
+        <td>${escapeHtml(r.category || '—')}</td>
+        <td style="text-align:right;font-weight:600;">₹${Math.round(r.amount || 0).toLocaleString('en-IN')}</td>
+    </tr>`).join('');
+    makeSortable('customer-expenses-tbody');
 }
 
-// Render empty placeholders for breakdowns
-function renderEmptyCustomerBreakdownCharts() {
-    if (chartCustomerSite) chartCustomerSite.destroy();
-    if (chartExpenseTypes) chartExpenseTypes.destroy();
-    const s = document.querySelector('#customer-site-chart');
-    const t = document.querySelector('#expense-types-chart');
-    if (s) s.innerHTML = '<div style="padding:60px; text-align:center; color:#888;">No data available</div>';
-    if (t) t.innerHTML = '<div style="padding:60px; text-align:center; color:#888;">No data available</div>';
+function renderExpenseTypeTable() {
+    const tbody = document.getElementById('expense-types-tbody');
+    if (!tbody) return;
+    const filter = document.getElementById('exp-type-customer-filter')?.value || 'all';
+    const rows = filter === 'all' ? expenseDataCache : expenseDataCache.filter(r => r.customerName === filter);
+    if (!rows.length) {
+        tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:24px;color:var(--text-muted);">No expense data</td></tr>';
+        return;
+    }
+    // Sort by category then amount desc
+    const sorted = [...rows].sort((a, b) => (a.category || '').localeCompare(b.category || '') || (b.amount || 0) - (a.amount || 0));
+    tbody.innerHTML = sorted.map(r => `<tr>
+        <td>${escapeHtml(r.category || '—')}</td>
+        <td>${escapeHtml(r.customerName)}</td>
+        <td>${escapeHtml(r.site || '—')}</td>
+        <td style="text-align:right;font-weight:600;">₹${Math.round(r.amount || 0).toLocaleString('en-IN')}</td>
+    </tr>`).join('');
+    makeSortable('expense-types-tbody');
 }
+
+// Keep these as no-ops so any remaining call sites don't error
+function renderCustomerSelectDropdown() {}
+function renderCustomerBreakdowns() {}
+function renderEmptyCustomerBreakdownCharts() {}
 
 // Filter core workforce list based on the global filterState
 function filterWorkforceDb() {
@@ -1794,10 +1685,9 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('export-attendance-formatted-btn')?.addEventListener('click', exportFormattedAttendance);
     document.getElementById('export-expenses-btn')?.addEventListener('click', exportCustomerExpensesList);
 
-    // 3. Customer breakdowns reactive dropdown
-    document.getElementById('customer-select')?.addEventListener('change', () => {
-        renderCustomerBreakdowns(filterExpensesDb());
-    });
+    // 3. Expense table customer filters
+    document.getElementById('exp-customer-filter')?.addEventListener('change', renderExpenseTable);
+    document.getElementById('exp-type-customer-filter')?.addEventListener('change', renderExpenseTypeTable);
 
     // 4. Modal dismiss event listeners
     document.getElementById('leave-modal-close')?.addEventListener('click', closeLeaveModal);
@@ -2202,14 +2092,12 @@ function renderSiteEngManpowerSummary(d) {
     const items = [
         { label: 'Total Sites',            value: d.totalSites            },
         { label: 'Assigned Sites',         value: d.assignedSites         },
-        { label: 'Active Sites',           value: d.activeSites           },
         { label: 'Upcoming Sites',         value: d.upcomingSites         },
         { label: 'Sites Without Engineers',value: d.sitesWithoutEngineers },
-        { label: 'Total Manpower',         value: d.totalManpower         },
-        { label: 'Active Manpower',        value: d.activeManpower        },
-        { label: 'Idle Manpower',          value: d.idleManpower          },
         { label: 'Understaffed Sites',     value: d.understaffedSites     },
-        { label: 'Overstaffed Sites',      value: d.overstaffedSites      }
+        { label: 'Overstaffed Sites',      value: d.overstaffedSites      },
+        { label: 'Total Manpower',         value: d.totalManpower         },
+        { label: 'Idle Manpower',          value: d.idleManpower          }
     ];
     grid.innerHTML = items.map(item => `
         <div class="kpi-card glassmorphic" style="padding: 12px 16px;">
@@ -3304,7 +3192,7 @@ async function fetchHrData() {
 
         renderHrHeadcount(hc);
         renderHrLeaveKPIs(ls);
-        renderHrExpenseKPIs(exp);
+
         renderHrRegLwp(reg, lwp);
         renderHrAttendanceChart(hm);
         renderHrLeaveStatusChart(ls);
@@ -3339,14 +3227,6 @@ function renderHrLeaveKPIs(ls) {
     set('hr-kpi-leave-days',     ls.totalApprovedDays);
 }
 
-function renderHrExpenseKPIs(exp) {
-    if (!exp) return;
-    const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v ?? '-'; };
-    set('hr-kpi-exp-pending-count',  exp.pending?.count  ?? '-');
-    set('hr-kpi-exp-approved-amt',   hrFmtInr(exp.approved?.amount));
-    set('hr-kpi-exp-rejected-count', exp.rejected?.count ?? '-');
-    set('hr-kpi-exp-total-amt',      hrFmtInr(exp.totalAmount));
-}
 
 function renderHrRegLwp(reg, lwp) {
     const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v ?? '-'; };
@@ -4001,23 +3881,6 @@ function openHrLeaveKPIModal(type) {
     openGenericKPIModal(titles[type] || type, ['Employee', 'Type', 'From', 'To', 'Status'], mapped);
 }
 
-function openHrExpenseKPIModal(type) {
-    const pending = hrCurrentData?.pending || [];
-    const titles  = { pendingClaims: 'Pending Expense Claims', approvedAmt: 'Approved Expenses', rejectedClaims: 'Rejected Expense Claims', totalClaimed: 'All Expense Claims' };
-    let rows = [];
-    if (type === 'pendingClaims')  rows = pending.filter(e => (e.status || '').toLowerCase() === 'pending');
-    else if (type === 'approvedAmt') rows = pending.filter(e => (e.status || '').toLowerCase() === 'approved');
-    else if (type === 'rejectedClaims') rows = pending.filter(e => (e.status || '').toLowerCase() === 'rejected');
-    else rows = pending;
-    const mapped = rows.slice(0, 200).map(r => ({
-        name:   r.employeeName || r.userId || '—',
-        type:   r.expenseType  || r.type   || '—',
-        amount: r.amount != null ? `₹${Number(r.amount).toLocaleString('en-IN')}` : '—',
-        status: r.status || '—'
-    }));
-    if (!mapped.length) { openGenericKPIModal(titles[type] || type, ['Employee', 'Type', 'Amount', 'Status'], [{ name: 'No records', type: '', amount: '', status: '' }]); return; }
-    openGenericKPIModal(titles[type] || type, ['Employee', 'Type', 'Amount', 'Status'], mapped);
-}
 
 // ── All DOMContentLoaded event listeners ─────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
@@ -4082,16 +3945,6 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById(cardId)?.addEventListener('click', () => openHrLeaveKPIModal(type));
     });
 
-    // HR expense KPI cards
-    const hrExpCardsMap = {
-        'card-hr-exp-pending':  'pendingClaims',
-        'card-hr-exp-approved': 'approvedAmt',
-        'card-hr-exp-rejected': 'rejectedClaims',
-        'card-hr-exp-total':    'totalClaimed'
-    };
-    Object.entries(hrExpCardsMap).forEach(([cardId, type]) => {
-        document.getElementById(cardId)?.addEventListener('click', () => openHrExpenseKPIModal(type));
-    });
 
     // Field Alerts filters
     ['siteng-alert-pm-filter', 'siteng-alert-project-filter', 'siteng-alert-region-filter'].forEach(id => {

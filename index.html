@@ -270,23 +270,11 @@
                         </div>
                     </div>
 
-                    <!-- Section 2: Manpower Status Today + Manpower Trend -->
+                    <!-- Section 2: Manpower Trend -->
                     <div class="director-section">
-                        <div class="charts-grid-two" style="grid-template-columns: 1fr 2fr;">
-                            <!-- Status Table -->
-                            <div class="chart-card">
-                                <h4>Manpower Status Today</h4>
-                                <table class="status-table-simple" id="siteng-status-table">
-                                    <tbody id="siteng-status-table-tbody">
-                                        <tr><td colspan="2" style="text-align:center;color:var(--text-muted);padding:24px;">Loading…</td></tr>
-                                    </tbody>
-                                </table>
-                            </div>
-                            <!-- 30-day Trend Line -->
-                            <div class="chart-card">
-                                <h4>Manpower Trend (Last 30 Days)</h4>
-                                <div id="siteng-manpower-trend-chart"></div>
-                            </div>
+                        <div class="chart-card">
+                            <h4>Manpower Trend (Last 30 Days)</h4>
+                            <div id="siteng-manpower-trend-chart"></div>
                         </div>
                     </div>
 
@@ -628,26 +616,57 @@
                         </div>
                         <div class="charts-grid-two" style="margin-bottom:12px;">
                             <div class="chart-card">
-                                <h4>Overall Customer Expenses</h4>
-                                <div id="customer-expenses-chart"></div>
+                                <div class="card-header-flex">
+                                    <h4>Overall Customer Expenses</h4>
+                                    <select id="exp-customer-filter" class="card-header-select" style="width:180px;">
+                                        <option value="all">All Customers</option>
+                                    </select>
+                                </div>
+                                <div class="table-scroll-wrapper" style="max-height:300px;">
+                                    <table class="modal-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Customer</th>
+                                                <th>Site</th>
+                                                <th>Category</th>
+                                                <th style="text-align:right;">Amount (₹)</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="customer-expenses-tbody">
+                                            <tr><td colspan="4" style="text-align:center;padding:24px;color:var(--text-muted);">Loading…</td></tr>
+                                        </tbody>
+                                    </table>
+                                </div>
                             </div>
+                            <div class="chart-card">
+                                <div class="card-header-flex">
+                                    <h4>Expense by Type</h4>
+                                    <select id="exp-type-customer-filter" class="card-header-select" style="width:180px;">
+                                        <option value="all">All Customers</option>
+                                    </select>
+                                </div>
+                                <div class="table-scroll-wrapper" style="max-height:300px;">
+                                    <table class="modal-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Category</th>
+                                                <th>Customer</th>
+                                                <th>Site</th>
+                                                <th style="text-align:right;">Amount (₹)</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="expense-types-tbody">
+                                            <tr><td colspan="4" style="text-align:center;padding:24px;color:var(--text-muted);">Loading…</td></tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="charts-grid-two" style="margin-bottom:12px;">
                             <div class="chart-card">
                                 <h4>Vendor Payment Distribution</h4>
                                 <div id="dir-vendor-payment-chart"></div>
                                 <p id="dir-vendor-payment-empty" style="display:none; text-align:center; color:var(--text-muted); padding: 24px 0; font-size:13px;">No payment data available</p>
-                            </div>
-                        </div>
-                        <div class="charts-grid-two">
-                            <div class="chart-card">
-                                <div class="card-header-flex">
-                                    <h4>Employee Customer-site Expense Breakdown</h4>
-                                    <select id="customer-select" class="card-header-select"></select>
-                                </div>
-                                <div id="customer-site-chart"></div>
-                            </div>
-                            <div class="chart-card">
-                                <h4>Employee Customer-Expense Types</h4>
-                                <div id="expense-types-chart"></div>
                             </div>
                         </div>
                     </div>
@@ -943,40 +962,6 @@
                                         <div class="kpi-data">
                                             <span class="kpi-value" id="hr-kpi-leave-days">-</span>
                                             <span class="kpi-label">Approved Days</span>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                            <!-- Expense Summary -->
-                            <div class="chart-card">
-                                <h4>Expense Summary</h4>
-                                <div class="kpis-grid-two" style="margin-top:8px;">
-                                    <div class="kpi-card glassmorphic" id="card-hr-exp-pending" style="cursor:pointer;">
-                                        <div class="kpi-icon bg-warning-light"><i data-lucide="receipt"></i></div>
-                                        <div class="kpi-data">
-                                            <span class="kpi-value text-warning" id="hr-kpi-exp-pending-count">-</span>
-                                            <span class="kpi-label">Pending Claims</span>
-                                        </div>
-                                    </div>
-                                    <div class="kpi-card glassmorphic" id="card-hr-exp-approved" style="cursor:pointer;">
-                                        <div class="kpi-icon bg-success-light"><i data-lucide="indian-rupee"></i></div>
-                                        <div class="kpi-data">
-                                            <span class="kpi-value text-success" id="hr-kpi-exp-approved-amt">-</span>
-                                            <span class="kpi-label">Approved Amount</span>
-                                        </div>
-                                    </div>
-                                    <div class="kpi-card glassmorphic" id="card-hr-exp-rejected" style="cursor:pointer;">
-                                        <div class="kpi-icon bg-danger-light"><i data-lucide="ban"></i></div>
-                                        <div class="kpi-data">
-                                            <span class="kpi-value text-danger" id="hr-kpi-exp-rejected-count">-</span>
-                                            <span class="kpi-label">Rejected Claims</span>
-                                        </div>
-                                    </div>
-                                    <div class="kpi-card glassmorphic" id="card-hr-exp-total" style="cursor:pointer;">
-                                        <div class="kpi-icon bg-info-light"><i data-lucide="wallet"></i></div>
-                                        <div class="kpi-data">
-                                            <span class="kpi-value" id="hr-kpi-exp-total-amt">-</span>
-                                            <span class="kpi-label">Total Claimed</span>
                                         </div>
                                     </div>
                                 </div>
