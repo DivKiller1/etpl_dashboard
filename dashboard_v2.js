@@ -1767,6 +1767,15 @@ document.addEventListener('DOMContentLoaded', () => {
         fetchDirectorData();
     });
 
+    document.getElementById('dir-date-from')?.addEventListener('change', () => {
+        fetchVendorPaymentAnalysis();
+        fetchDirectorLeaveTable();
+    });
+    document.getElementById('dir-date-to')?.addEventListener('change', () => {
+        fetchVendorPaymentAnalysis();
+        fetchDirectorLeaveTable();
+    });
+
     document.getElementById('director-refresh-btn')?.addEventListener('click', () => {
         fetchDirectorData();
     });
@@ -3041,9 +3050,16 @@ function hrApiBase() {
 }
 
 function hrParams() {
-    const month = document.getElementById('hr-month-select')?.value || currentMonth();
-    const state = document.getElementById('hr-state-filter')?.value || 'all';
-    return `?month=${encodeURIComponent(month)}&state=${encodeURIComponent(state)}`;
+    const month    = document.getElementById('hr-month-select')?.value  || currentMonth();
+    const state    = document.getElementById('hr-state-filter')?.value  || 'all';
+    const date     = document.getElementById('hr-target-date')?.value   || '';
+    const dateFrom = document.getElementById('hr-date-from')?.value     || '';
+    const dateTo   = document.getElementById('hr-date-to')?.value       || '';
+    let p = `?month=${encodeURIComponent(month)}&state=${encodeURIComponent(state)}`;
+    if (date)     p += `&date=${encodeURIComponent(date)}`;
+    if (dateFrom) p += `&dateFrom=${encodeURIComponent(dateFrom)}`;
+    if (dateTo)   p += `&dateTo=${encodeURIComponent(dateTo)}`;
+    return p;
 }
 
 function currentMonth() {
@@ -3411,9 +3427,12 @@ document.addEventListener('DOMContentLoaded', () => {
     // Refresh
     document.getElementById('hr-refresh-btn')?.addEventListener('click', fetchHrData);
 
-    // Month / State filters
+    // Month / State / Date filters
     document.getElementById('hr-month-select')?.addEventListener('change', fetchHrData);
     document.getElementById('hr-state-filter')?.addEventListener('change', fetchHrData);
+    document.getElementById('hr-target-date')?.addEventListener('change', fetchHrData);
+    document.getElementById('hr-date-from')?.addEventListener('change', fetchHrData);
+    document.getElementById('hr-date-to')?.addEventListener('change', fetchHrData);
 
     // Leave status filter
     document.getElementById('hr-leave-status-filter')?.addEventListener('change', (e) => {
@@ -3560,8 +3579,12 @@ async function fetchVendorPaymentAnalysis() {
     const tbody = document.getElementById('vpa-table-tbody');
     if (tbody) tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:32px;color:var(--text-muted);">Loading…</td></tr>`;
     try {
-        const mode = document.getElementById('vpa-mode-filter')?.value || 'all';
-        const url  = `${payApiBase()}/payments/analysis?mode=${encodeURIComponent(mode)}`;
+        const mode     = document.getElementById('vpa-mode-filter')?.value  || 'all';
+        const dateFrom = document.getElementById('dir-date-from')?.value    || '';
+        const dateTo   = document.getElementById('dir-date-to')?.value      || '';
+        let url = `${payApiBase()}/payments/analysis?mode=${encodeURIComponent(mode)}`;
+        if (dateFrom) url += `&dateFrom=${encodeURIComponent(dateFrom)}`;
+        if (dateTo)   url += `&dateTo=${encodeURIComponent(dateTo)}`;
         const res  = await fetch(url).then(r => r.json());
         vpaCache   = res.data || [];
         renderVendorPaymentAnalysis(vpaCache);
@@ -3655,10 +3678,14 @@ async function fetchDirectorLeaveTable() {
     if (tbody) tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;padding:32px;color:var(--text-muted);">Loading…</td></tr>`;
 
     try {
-        const month = document.getElementById('dir-leave-month-filter')?.value || 'all';
-        const emp   = document.getElementById('dir-leave-emp-filter')?.value   || 'all';
-        const type  = document.getElementById('dir-leave-type-filter')?.value  || 'all';
-        const url   = `${payApiBase()}/employee-leaves?month=${encodeURIComponent(month)}&employeeId=${encodeURIComponent(emp)}&type=${encodeURIComponent(type)}&page=${dirLeavePage}&limit=${dirLeaveLimit}`;
+        const month    = document.getElementById('dir-leave-month-filter')?.value || 'all';
+        const emp      = document.getElementById('dir-leave-emp-filter')?.value   || 'all';
+        const type     = document.getElementById('dir-leave-type-filter')?.value  || 'all';
+        const dateFrom = document.getElementById('dir-date-from')?.value          || '';
+        const dateTo   = document.getElementById('dir-date-to')?.value            || '';
+        let url = `${payApiBase()}/employee-leaves?month=${encodeURIComponent(month)}&employeeId=${encodeURIComponent(emp)}&type=${encodeURIComponent(type)}&page=${dirLeavePage}&limit=${dirLeaveLimit}`;
+        if (dateFrom) url += `&dateFrom=${encodeURIComponent(dateFrom)}`;
+        if (dateTo)   url += `&dateTo=${encodeURIComponent(dateTo)}`;
         const res   = await fetch(url).then(r => r.json());
         const data  = res.data || {};
 

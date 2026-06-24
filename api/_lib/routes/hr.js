@@ -27,8 +27,8 @@ async function buildHrCtx(query) {
     const today      = query.date  || fmt(new Date());
     const month      = query.month || today.substring(0, 7);
     const [yr, mo]   = month.split('-').map(Number);
-    const monthStart = `${month}-01`;
-    const monthEnd   = fmt(new Date(yr, mo, 0));
+    const monthStart = query.dateFrom || `${month}-01`;
+    const monthEnd   = query.dateTo   || fmt(new Date(yr, mo, 0));
 
     // Filter options
     const stateFilter  = (query.state      && query.state      !== 'all') ? query.state      : null;

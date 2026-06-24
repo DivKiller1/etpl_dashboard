@@ -1222,7 +1222,7 @@ router.get('/payments/filter-options', async (req, res) => {
 // GET /employee-leaves — individual approved leave records with filters
 router.get('/employee-leaves', async (req, res) => {
     try {
-        const { month, employeeId, type, page = 1, limit = 20 } = req.query;
+        const { month, dateFrom, dateTo, employeeId, type, page = 1, limit = 20 } = req.query;
 
         const users = await User.find({ isDeleted: { $ne: true } })
             .select('_id fullName lastName name').lean();
@@ -1233,7 +1233,11 @@ router.get('/employee-leaves', async (req, res) => {
         });
 
         const match = { status: 'Approved' };
-        if (month && month !== 'all') {
+        if (dateFrom || dateTo) {
+            match.startDate = {};
+            if (dateFrom) match.startDate.$gte = dateFrom;
+            if (dateTo)   match.startDate.$lte = dateTo;
+        } else if (month && month !== 'all') {
             const [yr, mo] = month.split('-');
             const last = new Date(parseInt(yr), parseInt(mo), 0).getDate();
             match.startDate = { $gte: `${yr}-${mo}-01`, $lte: `${yr}-${mo}-${String(last).padStart(2,'0')}` };
@@ -1287,10 +1291,15 @@ router.get('/employee-leaves', async (req, res) => {
 // GET /payments/analysis — all vendor payments with embedded name fields
 router.get('/payments/analysis', async (req, res) => {
     try {
-        const { mode } = req.query;
+        const { mode, dateFrom, dateTo } = req.query;
         const match = { isDeleted: { $ne: true }, status: { $regex: /^(approved|completed)$/i } };
         if (mode && mode !== 'all') {
             match.requestMode = { $regex: new RegExp(`^${mode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') };
+        }
+        if (dateFrom || dateTo) {
+            match.completedAt = {};
+            if (dateFrom) match.completedAt.$gte = new Date(dateFrom);
+            if (dateTo)   match.completedAt.$lte = new Date(dateTo + 'T23:59:59.999Z');
         }
 
         const records = await PaymentManagement.aggregate([
