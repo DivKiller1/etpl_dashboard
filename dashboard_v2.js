@@ -1567,7 +1567,7 @@ async function init() {
         : '/api/v1';
 
     try {
-        const response = await fetch(`${API_BASE_URL}/dashboard/data?duration=all`);
+        const response = await fetch(`${API_BASE_URL}/dashboard/data?duration=180`);
         if (!response.ok) throw new Error('API server returned bad status code');
         const result = await response.json();
 
@@ -3428,11 +3428,12 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('hr-refresh-btn')?.addEventListener('click', fetchHrData);
 
     // Month / State / Date filters
+    const debouncedFetchHr = (() => { let t; return () => { clearTimeout(t); t = setTimeout(fetchHrData, 300); }; })();
     document.getElementById('hr-month-select')?.addEventListener('change', fetchHrData);
     document.getElementById('hr-state-filter')?.addEventListener('change', fetchHrData);
-    document.getElementById('hr-target-date')?.addEventListener('change', fetchHrData);
-    document.getElementById('hr-date-from')?.addEventListener('change', fetchHrData);
-    document.getElementById('hr-date-to')?.addEventListener('change', fetchHrData);
+    document.getElementById('hr-target-date')?.addEventListener('change', debouncedFetchHr);
+    document.getElementById('hr-date-from')?.addEventListener('change', debouncedFetchHr);
+    document.getElementById('hr-date-to')?.addEventListener('change', debouncedFetchHr);
 
     // Leave status filter
     document.getElementById('hr-leave-status-filter')?.addEventListener('change', (e) => {
