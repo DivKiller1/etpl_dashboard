@@ -1295,10 +1295,15 @@ router.get('/payments/analysis', async (req, res) => {
 
         const records = await PaymentManagement.aggregate([
             { $match: match },
-            // Look up site for Without PO records (siteId stored as string → convert)
+            // Convert IDs for lookups
             { $addFields: {
-                siteObjId: { $convert: { input: '$siteId', to: 'objectId', onError: null, onNull: null } }
+                siteObjId:   { $convert: { input: '$siteId',   to: 'objectId', onError: null, onNull: null } },
+                vendorObjId: { $convert: { input: '$vendorId', to: 'objectId', onError: null, onNull: null } }
             }},
+            // With PO: authoritative vendor name from vendors collection
+            { $lookup: { from: 'vendors', localField: 'vendorObjId', foreignField: '_id', as: 'vendorInfo' } },
+            { $unwind: { path: '$vendorInfo', preserveNullAndEmptyArrays: true } },
+            // Without PO: site name from sites collection
             { $lookup: { from: 'sites', localField: 'siteObjId', foreignField: '_id', as: 'siteInfo' } },
             { $unwind: { path: '$siteInfo', preserveNullAndEmptyArrays: true } },
             { $sort: { completedAt: -1, _id: -1 } },
@@ -1306,12 +1311,12 @@ router.get('/payments/analysis', async (req, res) => {
                 _id: 1,
                 requestMode: 1,
                 status: 1,
-                // With PO → vendorName; Without PO → siteName from lookup, fallback customerName
+                // With PO → vendors.name (authoritative); Without PO → sites.name; fallback chain
                 vendorName: {
                     $cond: {
-                        if: { $and: [{ $ifNull: ['$vendorName', false] }, { $gt: [{ $strLenCP: { $ifNull: ['$vendorName', ''] } }, 0] }] },
-                        then: '$vendorName',
-                        else: { $ifNull: ['$siteInfo.name', { $ifNull: ['$customerName', '—'] }] }
+                        if: { $regexMatch: { input: { $ifNull: ['$requestMode', ''] }, regex: /^with po$/i } },
+                        then: { $ifNull: ['$vendorInfo.name', { $ifNull: ['$vendorName', '—'] }] },
+                        else: { $ifNull: ['$siteInfo.name',   { $ifNull: ['$customerName', '—'] }] }
                     }
                 },
                 amount:         { $ifNull: ['$requestedAmount', 0] },
