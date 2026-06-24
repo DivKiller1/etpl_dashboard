@@ -1303,20 +1303,18 @@ router.get('/payments/analysis', async (req, res) => {
             // With PO: authoritative vendor name from vendors collection
             { $lookup: { from: 'vendors', localField: 'vendorObjId', foreignField: '_id', as: 'vendorInfo' } },
             { $unwind: { path: '$vendorInfo', preserveNullAndEmptyArrays: true } },
-            // Without PO: site name from sites collection
-            { $lookup: { from: 'sites', localField: 'siteObjId', foreignField: '_id', as: 'siteInfo' } },
-            { $unwind: { path: '$siteInfo', preserveNullAndEmptyArrays: true } },
             { $sort: { completedAt: -1, _id: -1 } },
             { $project: {
                 _id: 1,
                 requestMode: 1,
                 status: 1,
-                // With PO → vendors.name (authoritative); Without PO → sites.name; fallback chain
+                // With PO → vendors.name (authoritative, from vendors collection)
+                // Without PO → entityName (the external entity being paid), fallback customerName
                 vendorName: {
                     $cond: {
                         if: { $regexMatch: { input: { $ifNull: ['$requestMode', ''] }, regex: /^with po$/i } },
                         then: { $ifNull: ['$vendorInfo.name', { $ifNull: ['$vendorName', '—'] }] },
-                        else: { $ifNull: ['$siteInfo.name',   { $ifNull: ['$customerName', '—'] }] }
+                        else: { $ifNull: ['$entityName',      { $ifNull: ['$customerName', '—'] }] }
                     }
                 },
                 amount:         { $ifNull: ['$requestedAmount', 0] },
