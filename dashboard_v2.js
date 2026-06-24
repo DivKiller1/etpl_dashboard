@@ -1960,43 +1960,14 @@ function renderSiteEngAlerts(d) {
 
 // ── Render: Engineer Status Table ────────────────────────────────────────────
 function renderSiteEngStatusChart(d) {
-    const tbody = document.getElementById('siteng-status-table-tbody');
-    if (!tbody) return;
-    if (!d) { tbody.innerHTML = '<tr><td colspan="2" style="text-align:center;color:var(--text-muted);padding:24px;">No data</td></tr>'; return; }
+    if (!d) return;
     sitengStatusCache = d;
-
-    const rows = [
-        { icon: 'map-pin',      label: 'On Site',    val: d.onSite   ?? 0, color: '#10b981' },
-        { icon: 'building-2',   label: 'At Office',   val: d.atOffice ?? 0, color: '#6366f1' },
-        { icon: 'calendar-off', label: 'On Leave',    val: d.onLeave  ?? 0, color: '#f59e0b' },
-        { icon: 'minus-circle', label: 'On LWP',      val: d.onLWP    ?? 0, color: '#a78bfa' },
-        { icon: 'zap-off',      label: 'Idle',        val: d.idle     ?? 0, color: '#ef4444' }
-    ];
-    const total = rows.reduce((s, r) => s + r.val, 0) || 1;
-    tbody.innerHTML = rows.map(r => {
-        const pct = ((r.val / total) * 100).toFixed(0);
-        return `<tr>
-            <td style="display:flex;align-items:center;gap:8px;padding:7px 10px;">
-                <span style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:6px;background:#f1f5f9;flex-shrink:0;">
-                    <i data-lucide="${r.icon}" style="width:13px;height:13px;color:${r.color};"></i>
-                </span>
-                <span style="font-size:13px;font-weight:600;color:#334155;">${r.label}</span>
-            </td>
-            <td class="status-count-cell" style="padding:7px 10px;">
-                <span style="color:${r.color};font-size:17px;font-weight:700;">${r.val}</span>
-                <span style="font-size:11px;color:var(--text-muted);margin-left:4px;">${pct}%</span>
-            </td>
-        </tr>`;
-    }).join('');
-    if (window.lucide) lucide.createIcons();
-
-    // Also populate the 6-card activity status KPIs
     const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val ?? 0; };
-    set('siteng-act-onsite',    d.onSite    ?? 0);
-    set('siteng-act-atoffice',  d.atOffice  ?? 0);
-    set('siteng-act-onleave',   d.onLeave   ?? 0);
-    set('siteng-act-lwp',       d.onLWP     ?? 0);
-    set('siteng-act-idle',      d.idle      ?? 0);
+    set('siteng-act-onsite',   d.onSite  ?? 0);
+    set('siteng-act-atoffice', d.atOffice ?? 0);
+    set('siteng-act-onleave',  d.onLeave  ?? 0);
+    set('siteng-act-lwp',      d.onLWP    ?? 0);
+    set('siteng-act-idle',     d.idle     ?? 0);
 }
 
 // ── Render: 30-day Manpower Trend ────────────────────────────────────────────
@@ -2590,23 +2561,6 @@ function renderDirectorDashboard(data) {
         });
     }
 
-    // Idle Engineers Table
-    const idleBody = document.getElementById('dir-idle-engineers-table-body');
-    idleBody.innerHTML = '';
-    if (alerts.idleEngineers.length === 0) {
-        idleBody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: #888;">No idle engineers.</td></tr>';
-    } else {
-        alerts.idleEngineers.forEach(eng => {
-            idleBody.innerHTML += `
-                <tr>
-                    <td>${eng.employeeId || 'N/A'}</td>
-                    <td><strong>${eng.fullName}</strong></td>
-                    <td>${eng.designation || 'Staff'}</td>
-                    <td>${eng.managerName}</td>
-                </tr>
-            `;
-        });
-    }
 
     // Sites At Risk Table (element may not exist if section was removed)
     const sitesRiskBody = document.getElementById('dir-sites-risk-table-body');
@@ -2630,7 +2584,6 @@ function renderDirectorDashboard(data) {
 
     makeSortable('dir-pm-performance-table-body');
     makeSortable('dir-project-health-table-body');
-    makeSortable('dir-idle-engineers-table-body');
 
     // 4. Render Charts
     renderDirectorCharts(charts);
@@ -3245,6 +3198,18 @@ function renderHrRegLwp(reg, lwp) {
 function renderHrAttendanceChart(series) {
     const el = document.getElementById('hr-attendance-chart');
     if (!el || !series || !series.length) return;
+
+    // Populate today's attendance summary KPIs from the last entry
+    const today = series[series.length - 1];
+    if (today) {
+        const set = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
+        const total = today.total || 1;
+        const rate = Math.round((today.present / total) * 100);
+        set('hr-att-present-today', today.present ?? '-');
+        set('hr-att-onleave-today', today.onLeave ?? '-');
+        set('hr-att-absent-today',  today.absent  ?? '-');
+        set('hr-att-rate-today',    `${rate}%`);
+    }
 
     if (hrChartAttendance) { hrChartAttendance.destroy(); hrChartAttendance = null; }
 

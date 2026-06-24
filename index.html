@@ -556,25 +556,20 @@
                                     <div class="map-legend-item"><span class="map-legend-dot" style="background:#6b7280;"></span>Other</div>
                                 </div>
                             </div>
-                            <!-- Idle Engineers table -->
+                            <!-- PM Utilization table -->
                             <div class="chart-card">
-                                <div class="card-header-flex">
-                                    <h4>Idle Engineers (No Attendance &gt; 5 Days)</h4>
-                                    <button id="dir-export-idle-btn" class="btn btn-secondary btn-sm">
-                                        <i data-lucide="download"></i> Export
-                                    </button>
-                                </div>
+                                <h4>Project Manager Team Utilization</h4>
                                 <div class="table-scroll-wrapper" style="max-height: 300px;">
                                     <table class="modal-table">
                                         <thead>
                                             <tr>
-                                                <th>Emp ID</th>
-                                                <th>Name</th>
-                                                <th>Role</th>
-                                                <th>Manager</th>
+                                                <th>Project Manager</th>
+                                                <th style="text-align: center;">Team Size</th>
+                                                <th style="text-align: center;">Deployed Today</th>
+                                                <th style="text-align: center;">Utilization %</th>
                                             </tr>
                                         </thead>
-                                        <tbody id="dir-idle-engineers-table-body"></tbody>
+                                        <tbody id="dir-pm-performance-table-body"></tbody>
                                     </table>
                                 </div>
                             </div>
@@ -668,6 +663,23 @@
                                 <div id="dir-vendor-payment-chart"></div>
                                 <p id="dir-vendor-payment-empty" style="display:none; text-align:center; color:var(--text-muted); padding: 24px 0; font-size:13px;">No payment data available</p>
                             </div>
+                            <div class="chart-card">
+                                <h4>Project Status &amp; Achievement</h4>
+                                <div class="table-scroll-wrapper" style="max-height: 350px;">
+                                    <table class="modal-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Project / Customer</th>
+                                                <th style="text-align: center;">Total Sites</th>
+                                                <th style="text-align: center;">Completed</th>
+                                                <th style="text-align: center;">Pending</th>
+                                                <th style="text-align: center;">Achievement %</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="dir-project-health-table-body"></tbody>
+                                    </table>
+                                </div>
+                            </div>
                         </div>
                     </div>
 
@@ -714,44 +726,6 @@
                         </div>
                     </div>
 
-                    <!-- Details Lists & PM Performance Grid -->
-                    <div class="director-section">
-                        <div class="charts-grid-two">
-                            <div class="chart-card">
-                                <h4>Project Manager Team Utilization</h4>
-                                <div class="table-scroll-wrapper" style="max-height: 350px;">
-                                    <table class="modal-table">
-                                        <thead>
-                                            <tr>
-                                                <th>Project Manager</th>
-                                                <th style="text-align: center;">Team Size</th>
-                                                <th style="text-align: center;">Deployed Today</th>
-                                                <th style="text-align: center;">Utilization %</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody id="dir-pm-performance-table-body"></tbody>
-                                    </table>
-                                </div>
-                            </div>
-                            <div class="chart-card">
-                                <h4>Project Status &amp; Achievement</h4>
-                                <div class="table-scroll-wrapper" style="max-height: 350px;">
-                                    <table class="modal-table">
-                                        <thead>
-                                            <tr>
-                                                <th>Project / Customer</th>
-                                                <th style="text-align: center;">Total Sites</th>
-                                                <th style="text-align: center;">Completed</th>
-                                                <th style="text-align: center;">Pending</th>
-                                                <th style="text-align: center;">Achievement %</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody id="dir-project-health-table-body"></tbody>
-                                    </table>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
 
                     <!-- Payment Analytics -->
                     <div class="director-section">
@@ -915,6 +889,40 @@
                         </div>
                     </div>
 
+                    <!-- Attendance Summary KPIs -->
+                    <div class="director-section">
+                        <div class="kpis-grid-four">
+                            <div class="kpi-card glassmorphic">
+                                <div class="kpi-icon bg-success-light"><i data-lucide="user-check"></i></div>
+                                <div class="kpi-data">
+                                    <span class="kpi-value text-success" id="hr-att-present-today">-</span>
+                                    <span class="kpi-label">Present Today</span>
+                                </div>
+                            </div>
+                            <div class="kpi-card glassmorphic">
+                                <div class="kpi-icon bg-teal-light"><i data-lucide="umbrella"></i></div>
+                                <div class="kpi-data">
+                                    <span class="kpi-value" id="hr-att-onleave-today">-</span>
+                                    <span class="kpi-label">On Leave Today</span>
+                                </div>
+                            </div>
+                            <div class="kpi-card glassmorphic">
+                                <div class="kpi-icon bg-danger-light"><i data-lucide="user-x"></i></div>
+                                <div class="kpi-data">
+                                    <span class="kpi-value text-danger" id="hr-att-absent-today">-</span>
+                                    <span class="kpi-label">Absent Today</span>
+                                </div>
+                            </div>
+                            <div class="kpi-card glassmorphic">
+                                <div class="kpi-icon bg-blue-light"><i data-lucide="percent"></i></div>
+                                <div class="kpi-data">
+                                    <span class="kpi-value" id="hr-att-rate-today">-</span>
+                                    <span class="kpi-label">Attendance Rate</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- Section 2: Attendance Heatmap + Leave Summary -->
                     <div class="director-section">
                         <div class="charts-grid-two">
@@ -929,7 +937,7 @@
                         </div>
                     </div>
 
-                    <!-- Section 3: Leave KPIs + Expense KPIs -->
+                    <!-- Section 3: Leave Summary + Regularization & LWP Summary -->
                     <div class="director-section">
                         <div class="charts-grid-two">
                             <!-- Leave Summary -->
@@ -966,50 +974,49 @@
                                     </div>
                                 </div>
                             </div>
-                        </div>
-                    </div>
-
-                    <!-- Section 4: Regularization + Leave Requests (left) | Pending Approvals + LWP (right) -->
-                    <div class="director-section">
-                        <div class="charts-grid-two" style="align-items:stretch;">
-                            <!-- Left column: Regularization stacked above Leave Requests -->
-                            <div style="display:flex; flex-direction:column; gap:16px;">
-                                <!-- Regularization & LWP Summary -->
-                                <div class="chart-card">
-                                    <h4>Regularization &amp; LWP Summary</h4>
-                                    <div class="kpis-grid-two" style="margin-top:8px;">
-                                        <div class="kpi-card glassmorphic">
-                                            <div class="kpi-icon bg-orange-light"><i data-lucide="alert-circle"></i></div>
-                                            <div class="kpi-data">
-                                                <span class="kpi-value text-danger" id="hr-kpi-absent-days">-</span>
-                                                <span class="kpi-label">Absent Person-Days</span>
-                                            </div>
+                            <!-- Regularization & LWP Summary -->
+                            <div class="chart-card">
+                                <h4>Regularization &amp; LWP Summary</h4>
+                                <div class="kpis-grid-two" style="margin-top:8px;">
+                                    <div class="kpi-card glassmorphic">
+                                        <div class="kpi-icon bg-orange-light"><i data-lucide="alert-circle"></i></div>
+                                        <div class="kpi-data">
+                                            <span class="kpi-value text-danger" id="hr-kpi-absent-days">-</span>
+                                            <span class="kpi-label">Absent Person-Days</span>
                                         </div>
-                                        <div class="kpi-card glassmorphic">
-                                            <div class="kpi-icon bg-red-light"><i data-lucide="user-x"></i></div>
-                                            <div class="kpi-data">
-                                                <span class="kpi-value text-danger" id="hr-kpi-absent-emps">-</span>
-                                                <span class="kpi-label">Employees with Absences</span>
-                                            </div>
+                                    </div>
+                                    <div class="kpi-card glassmorphic">
+                                        <div class="kpi-icon bg-red-light"><i data-lucide="user-x"></i></div>
+                                        <div class="kpi-data">
+                                            <span class="kpi-value text-danger" id="hr-kpi-absent-emps">-</span>
+                                            <span class="kpi-label">Employees with Absences</span>
                                         </div>
-                                        <div class="kpi-card glassmorphic">
-                                            <div class="kpi-icon bg-warning-light"><i data-lucide="minus-circle"></i></div>
-                                            <div class="kpi-data">
-                                                <span class="kpi-value" id="hr-kpi-lwp-count">-</span>
-                                                <span class="kpi-label">LWP Records</span>
-                                            </div>
+                                    </div>
+                                    <div class="kpi-card glassmorphic">
+                                        <div class="kpi-icon bg-warning-light"><i data-lucide="minus-circle"></i></div>
+                                        <div class="kpi-data">
+                                            <span class="kpi-value" id="hr-kpi-lwp-count">-</span>
+                                            <span class="kpi-label">LWP Records</span>
                                         </div>
-                                        <div class="kpi-card glassmorphic">
-                                            <div class="kpi-icon bg-danger-light"><i data-lucide="calendar-x"></i></div>
-                                            <div class="kpi-data">
-                                                <span class="kpi-value text-danger" id="hr-kpi-lwp-days">-</span>
-                                                <span class="kpi-label">Total LWP Days</span>
-                                            </div>
+                                    </div>
+                                    <div class="kpi-card glassmorphic">
+                                        <div class="kpi-icon bg-danger-light"><i data-lucide="calendar-x"></i></div>
+                                        <div class="kpi-data">
+                                            <span class="kpi-value text-danger" id="hr-kpi-lwp-days">-</span>
+                                            <span class="kpi-label">Total LWP Days</span>
                                         </div>
                                     </div>
                                 </div>
-                                <!-- Leave Requests (fills the gap below Regularization) -->
-                                <div class="chart-card" style="flex:1;">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Section 4: Leave Requests (left) | Pending Approvals + LWP (right) -->
+                    <div class="director-section">
+                        <div class="charts-grid-two" style="align-items:stretch;">
+                            <!-- Left column: Leave Requests -->
+                            <div>
+                                <div class="chart-card">
                                     <div class="card-header-flex">
                                         <h4>Leave Requests</h4>
                                         <div style="display:flex; gap:8px; align-items:center;">
@@ -1024,7 +1031,7 @@
                                             </button>
                                         </div>
                                     </div>
-                                    <div class="table-scroll-wrapper" style="max-height: 280px; margin-top:8px;">
+                                    <div class="table-scroll-wrapper" style="max-height: 320px; margin-top:8px;">
                                         <table class="modal-table">
                                             <thead>
                                                 <tr>
